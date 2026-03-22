@@ -64,11 +64,25 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'cbe_backend.urls'
 AUTH_USER_MODEL = 'cbe_app.User'
 
-# CORS SETTINGS (CRITICAL for React-Django communication)
-CORS_ALLOW_ALL_ORIGINS = False  # For development only! Change for production
+# CORS SETTINGS
+# Allow credentials (cookies)
 CORS_ALLOW_CREDENTIALS = True
 
+# Session settings
+SESSION_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SECURE = True
+# Session settings
+SESSION_COOKIE_HTTPONLY = True
+# SESSION_COOKIE_SECURE = config('DJANGO_ENV', default='development') == 'production'
+# SESSION_COOKIE_SAMESITE = 'Lax'
+
+
+CSRF_COOKIE_SAMESITE = 'None'
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = False
+
 CORS_ALLOWED_ORIGINS = [
+    "https://jawabucms.vercel.app", 
     "https://jawabucbeadmin.onrender.com",
     "http://localhost:5173", 
     "http://127.0.0.1:5173",
@@ -110,13 +124,6 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
-# CORS settings
-
-
-# Session settings
-SESSION_COOKIE_HTTPONLY = True
-# SESSION_COOKIE_SECURE = config('DJANGO_ENV', default='development') == 'production'
-SESSION_COOKIE_SAMESITE = 'Lax'
 
 # REST Framework settings
 REST_FRAMEWORK = {
