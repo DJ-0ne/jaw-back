@@ -30,7 +30,7 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['jawabucms.vercel.app', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['jawabucbeadmin.onrender.com','jawabucms.vercel.app', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -69,6 +69,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOWED_ORIGINS = [
     "https://jawabucms.vercel.app",
+    "https://jawabucbeadmin.onrender.com",
     "http://localhost:5173", 
     "http://127.0.0.1:5173",
     
