@@ -68,6 +68,8 @@ CORS_ALLOW_CREDENTIALS = True
 # Session settings
 SESSION_COOKIE_SAMESITE = 'None'
 SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_AGE = 1800  # 30 minutes
+
 # Session settings
 SESSION_COOKIE_HTTPONLY = True
 # SESSION_COOKIE_SECURE = config('DJANGO_ENV', default='development') == 'production'
