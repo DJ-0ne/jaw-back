@@ -21,16 +21,13 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
-
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ['jawabucbeadmin.onrender.com','jawabucms.vercel.app', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['jawabucbeadmin.onrender.com','jawabu-cbe-sms.vercel.app', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -82,14 +79,14 @@ CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = False
 
 CORS_ALLOWED_ORIGINS = [
-    "https://jawabucms.vercel.app", 
+    "https://jawabu-cbe-sms.vercel.app",
     "https://jawabucbeadmin.onrender.com",
     "http://localhost:5173", 
     "http://127.0.0.1:5173",
     
 ]
 CSRF_TRUSTED_ORIGINS = [
-    "https://jawabucms.vercel.app",
+    "https://jawabu-cbe-sms.vercel.app",
     "https://jawabucbeadmin.onrender.com",
 ]
 
