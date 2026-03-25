@@ -17,8 +17,8 @@ urlpatterns = [
     path('profile/', get_student_profile, name='student-profile'),
     
     # Fees
-    path('fees/summary/', get_fee_summary, name='student-fee-summary'),
-    path('fees/transactions/', get_fee_transactions, name='student-fee-transactions'),
+    path('dashboard/fees/summary/', get_fee_summary, name='student-fee-summary'),
+    path('dashboard/fees/transactions/', get_fee_transactions, name='student-fee-transactions'),
     
     # Attendance
     path('attendance/', get_attendance, name='student-attendance'),
