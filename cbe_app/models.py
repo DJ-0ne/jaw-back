@@ -8,7 +8,7 @@ from django.utils import timezone
 import datetime
 from django.core.exceptions import ValidationError
 import uuid
-
+from decimal import Decimal
 # ==================== UTILITY FUNCTIONS ====================
 def generate_inv_id():
     return f"INV-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -157,8 +157,8 @@ class Student(BaseModel):
                                 related_name='student_profile')
     
     # Contact Information
-    address = models.TextField(validators=[RegexValidator(regex='.{10,}', message='Address must be at least 10 characters')])
-    city = models.CharField(max_length=50)
+    address = models.TextField(validators=[RegexValidator(regex='.{5,}', message='Address must be at least 10 characters')])
+    city = models.CharField(max_length=50, null=True, blank=True)
     country = models.CharField(max_length=50, default='Kenya')
     phone = models.CharField(max_length=20, blank=True, null=True, 
                              validators=[RegexValidator(regex=r'^\+?[0-9\s\-\(\)]+$')])
@@ -288,9 +288,10 @@ class AcademicYear(BaseModel):
     
     class Meta:
         ordering = ['-start_date']
+        unique_together = ['year_code', 'year_name']   # safetyunique_together = ['year_code', 'year_name']   # safety
     
     def __str__(self):
-        return self.year_name
+        return f"{self.year_name} ({self.year_code})"   # much clearer
 
 class Term(BaseModel):
     """School Terms (1, 2, 3)"""
@@ -364,22 +365,43 @@ class SubStrand(BaseModel):
     def __str__(self):
         return f"{self.substrand_code}: {self.substrand_name}"
 
+
 class Competency(BaseModel):
     """Specific Competencies within Sub-Strands"""
-    substrand = models.ForeignKey(SubStrand, on_delete=models.CASCADE, related_name='competencies')
+    substrand = models.ForeignKey(
+        SubStrand, 
+        on_delete=models.CASCADE, 
+        related_name='competencies'
+    )
     competency_code = models.CharField(max_length=20)
     competency_statement = models.TextField()
     performance_indicator = models.TextField(blank=True, null=True)
+    
+    # Existing fields
     is_core_competency = models.BooleanField(default=True)
     display_order = models.IntegerField(default=0)
     
+    # NEW FIELDS - This fixes the "unexpected keyword arguments" error
+    core_competencies = models.JSONField(
+        default=list,
+        blank=True,
+        null=False,
+        help_text="List of KICD core competency codes e.g. ['CC01', 'CC02']"
+    )
+    values = models.JSONField(
+        default=list,
+        blank=True,
+        null=False,
+        help_text="List of value codes e.g. ['VAL01', 'VAL03']"
+    )
+
     class Meta:
         unique_together = ['substrand', 'competency_code']
         ordering = ['substrand', 'display_order']
     
     def __str__(self):
         return f"{self.competency_code}: {self.competency_statement[:100]}..."
-
+    
 # ==================== SUMMATIVE ASSESSMENT MODELS (CBE) ====================
 class AssessmentWindow(BaseModel):
     """Pre-defined assessment windows (Opener, Mid-Term, End-Term)"""
@@ -436,35 +458,42 @@ class SummativeAssessment(BaseModel):
 class SummativeRating(BaseModel):
     """Individual competency ratings for summative assessments"""
     RATING_CHOICES = [
-        ('BE', 'Below Expectation (0-39%)'),
-        ('AE', 'Approaching Expectation (40-59%)'),
-        ('ME', 'Meeting Expectation (60-79%)'),
-        ('EE', 'Exceeding Expectation (80-100%)'),
+        ('EE1', 'Exceptional (90-100%)'),
+        ('EE2', 'Very Good (75-89%)'),
+        ('ME1', 'Good (58-74%)'),
+        ('ME2', 'Fair (41-57%)'),
+        ('AE1', 'Needs Improvement (31-40%)'),
+        ('AE2', 'Below Average (21-30%)'),
+        ('BE1', 'Well Below Average (11-20%)'),
+        ('BE2', 'Minimal (1-10%)'),
     ]
-    
-    # Hidden internal values for calculation
+
     RATING_VALUES = {
-        'BE': 1,
-        'AE': 2,
-        'ME': 3,
-        'EE': 4,
+        'EE1': 8,
+        'EE2': 7,
+        'ME1': 6,
+        'ME2': 5,
+        'AE1': 4,
+        'AE2': 3,
+        'BE1': 2,
+        'BE2': 1,
     }
-    
+
     assessment = models.ForeignKey(SummativeAssessment, on_delete=models.CASCADE, related_name='ratings')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='summative_ratings')
     competency = models.ForeignKey(Competency, on_delete=models.CASCADE, related_name='student_ratings')
-    
-    rating = models.CharField(max_length=2, choices=RATING_CHOICES)
+
+    rating = models.CharField(max_length=3, choices=RATING_CHOICES)  # ← 2 → 3
     teacher_comment = models.TextField(blank=True, null=True)
-    
+
     # Auto-calculated internal value
     internal_value = models.IntegerField(default=0)
-    
+
     # Audit
     rated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='given_ratings')
     rated_at = models.DateTimeField(auto_now_add=True)
     modified_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         unique_together = ['assessment', 'student', 'competency']
         indexes = [
@@ -473,15 +502,15 @@ class SummativeRating(BaseModel):
             models.Index(fields=['competency']),
             models.Index(fields=['rating']),
         ]
-    
+
     def save(self, *args, **kwargs):
-        # Auto-calculate internal value
         self.internal_value = self.RATING_VALUES.get(self.rating, 1)
         super().save(*args, **kwargs)
-    
+
     def __str__(self):
         return f"{self.student.admission_no} - {self.competency.competency_code}: {self.rating}"
 
+        
 class TermlySummary(BaseModel):
     """Aggregated termly results for each student per learning area"""
     PROGRESSION_STATUS_CHOICES = [
@@ -505,8 +534,7 @@ class TermlySummary(BaseModel):
     endterm_weighted = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     
     final_internal_value = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    final_rating = models.CharField(max_length=2, choices=SummativeRating.RATING_CHOICES, blank=True, null=True)
-    
+    final_rating = models.CharField(max_length=3, choices=SummativeRating.RATING_CHOICES,blank=True, null=True)    
     # Competency summary
     total_competencies = models.IntegerField(default=0)
     be_count = models.IntegerField(default=0)
@@ -1710,6 +1738,7 @@ class StaffLoan(BaseModel):
     
     # Repayment Terms
     repayment_months = models.IntegerField(default=12)
+    reason = models.TextField(null=True, blank=True)
     monthly_installment = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     start_date = models.DateField()
     end_date = models.DateField()
@@ -1751,16 +1780,27 @@ class StaffLoan(BaseModel):
         ]
     
     def save(self, *args, **kwargs):
-        if self.loan_amount > 0 and self.repayment_months > 0:
-            if self.interest_type == 'Flat' and self.interest_rate > 0:
-                total_interest = self.loan_amount * (self.interest_rate / 100) * (self.repayment_months / 12)
-                total_repayment = self.loan_amount + total_interest
-                self.monthly_installment = total_repayment / self.repayment_months
-            else:
-                self.monthly_installment = self.loan_amount / self.repayment_months
-        
-        self.outstanding_balance = self.loan_amount - self.total_principal_paid
-        
+        if self.loan_amount and self.repayment_months:
+            # Convert everything to Decimal once
+            loan_amount = Decimal(str(self.loan_amount))
+            interest_rate = Decimal(str(self.interest_rate or 0))
+            repayment_months = Decimal(str(self.repayment_months))
+            total_principal_paid = Decimal(str(self.total_principal_paid or 0))
+
+            # === CALCULATE MONTHLY INSTALLMENT (only if not already set by serializer) ===
+            if not self.monthly_installment or self.monthly_installment == 0:
+                if self.interest_type == 'Flat' and interest_rate > 0:
+                    years = repayment_months / Decimal('12')
+                    total_interest = loan_amount * (interest_rate / Decimal('100')) * years
+                    total_repayment = loan_amount + total_interest
+                    self.monthly_installment = total_repayment / repayment_months
+                else:
+                    self.monthly_installment = loan_amount / repayment_months
+
+            # === OUTSTANDING BALANCE ===
+            if not self.outstanding_balance or self.outstanding_balance == 0:
+                self.outstanding_balance = loan_amount - total_principal_paid
+
         super().save(*args, **kwargs)
     
     def __str__(self):
