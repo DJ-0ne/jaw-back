@@ -3,7 +3,7 @@
 from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from django.contrib.auth import authenticate
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -30,6 +30,15 @@ def get_tokens_for_user(user):
         'refresh': str(refresh),
         'access': str(refresh.access_token),
     }
+
+
+def check_active_session_exists(user):
+    """Check if user already has an active session"""
+    return UserSession.objects.filter(
+        user=user,
+        revoked=False,
+        expires_at__gt=timezone.now()
+    ).exists()
 
 
 def create_user_session(user, request, tokens):
@@ -77,17 +86,18 @@ def register(request):
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login(request):
-    """Login user - FIXED for Django superusers/staff"""
+    """Login user - REJECT if already logged in elsewhere"""
     serializer = UserLoginSerializer(data=request.data, context={'request': request})
     
     if serializer.is_valid():
         user = serializer.validated_data['user']
         
-        # IP whitelist check
-        # ip_address = request.META.get('REMOTE_ADDR')
-        # whitelist_entry = IPWhitelist.objects.filter(ip_address=ip_address, status='Active').first()
-        # if whitelist_entry:
-        #     whitelist_entry.increment_access_count()
+        # CHECK IF USER ALREADY HAS AN ACTIVE SESSION
+        if check_active_session_exists(user):
+            return Response({
+                'error': 'User is already logged in on another device. Please logout from that device first.',
+                'code': 'ACTIVE_SESSION_EXISTS'
+            }, status=status.HTTP_409_CONFLICT)
         
         # Generate tokens
         tokens = get_tokens_for_user(user)
@@ -102,28 +112,70 @@ def login(request):
             'session_id': str(session.id),
         }, status=status.HTTP_200_OK)
     
-    # Return proper error messages from serializer
     return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
 
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def logout(request):
-    """Logout user and invalidate session"""
+    """Logout user and invalidate session - FIXED VERSION"""
     try:
+        # Get the access token from the request header
+        auth_header = request.headers.get('Authorization', '')
+        access_token = auth_header.replace('Bearer ', '')
+        
+        # Get the refresh token from request body
         refresh_token = request.data.get('refresh_token')
         
+        if not access_token and not refresh_token:
+            return Response({'error': 'No token provided'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Find and revoke the session using either access or refresh token
+        session = None
+        
         if refresh_token:
-            try:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-            except Exception:
-                pass  # token already invalid or blacklisted
+            session = UserSession.objects.filter(
+                user=request.user,
+                refresh_token=refresh_token,
+                revoked=False
+            ).first()
         
-        # Revoke all sessions
-        UserSession.objects.filter(user=request.user, revoked=False).update(revoked=True)
+        if not session and access_token:
+            session = UserSession.objects.filter(
+                user=request.user,
+                access_token=access_token,
+                revoked=False
+            ).first()
         
-        return Response({'message': 'Logout successful'}, status=status.HTTP_200_OK)
+        if session:
+            # Revoke the session
+            session.revoked = True
+            session.save()
+            
+            # Blacklist the refresh token if it exists
+            if session.refresh_token:
+                try:
+                    token = RefreshToken(session.refresh_token)
+                    token.blacklist()
+                except Exception:
+                    pass
+            
+            return Response({
+                'message': 'Logout successful',
+                'session_revoked': True
+            }, status=status.HTTP_200_OK)
+        else:
+            # If no specific session found, revoke all sessions for this user
+            # (This handles edge cases)
+            sessions_revoked = UserSession.objects.filter(
+                user=request.user, 
+                revoked=False
+            ).update(revoked=True)
+            
+            return Response({
+                'message': f'Logout successful. {sessions_revoked} session(s) revoked.',
+                'session_revoked': True
+            }, status=status.HTTP_200_OK)
         
     except Exception as e:
         logger.error(f"Logout error: {str(e)}")
@@ -140,30 +192,37 @@ def refresh_token(request):
         return Response({'error': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        # Check if session exists and is not revoked
+        session = UserSession.objects.filter(
+            refresh_token=refresh_token,
+            revoked=False,
+            expires_at__gt=timezone.now()
+        ).first()
+        
+        if not session:
+            return Response({
+                'error': 'Session expired or revoked. Please login again.'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
         token = RefreshToken(refresh_token)
         user_id = token.payload.get('user_id')
         user = User.objects.get(id=user_id)
         
         new_tokens = get_tokens_for_user(user)
         
-        # Update session
-        session = UserSession.objects.filter(
-            user=user,
-            refresh_token=refresh_token,
-            revoked=False
-        ).first()
-        
-        if session:
-            session.access_token = new_tokens['access']
-            session.refresh_token = new_tokens['refresh']
-            session.save()
+        # Update session with new tokens
+        session.access_token = new_tokens['access']
+        session.refresh_token = new_tokens['refresh']
+        session.last_activity = timezone.now()
+        session.save()
         
         return Response({
             'access': new_tokens['access'],
             'refresh': new_tokens['refresh']
         }, status=status.HTTP_200_OK)
         
-    except Exception:
+    except Exception as e:
+        logger.error(f"Refresh token error: {str(e)}")
         return Response({'error': 'Invalid refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
 
 
@@ -171,6 +230,27 @@ def refresh_token(request):
 @permission_classes([permissions.IsAuthenticated])
 def validate_token(request):
     """Validate token and return full user info"""
+    # Check if the session is still valid
+    auth_header = request.headers.get('Authorization', '')
+    access_token = auth_header.replace('Bearer ', '')
+    
+    session = UserSession.objects.filter(
+        user=request.user,
+        access_token=access_token,
+        revoked=False,
+        expires_at__gt=timezone.now()
+    ).first()
+    
+    if not session:
+        return Response({
+            'valid': False,
+            'error': 'Session expired or revoked'
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Update last activity
+    session.last_activity = timezone.now()
+    session.save(update_fields=['last_activity'])
+    
     user_data = UserSerializer(request.user).data
     return Response({
         'valid': True,
@@ -237,8 +317,19 @@ def revoke_session(request, session_id):
     """Revoke a specific session"""
     try:
         session = UserSession.objects.get(id=session_id, user=request.user)
+        
+        # Don't allow revoking current session
+        auth_header = request.headers.get('Authorization', '')
+        current_token = auth_header.replace('Bearer ', '')
+        
+        if session.access_token == current_token:
+            return Response({
+                'error': 'Cannot revoke current session. Use logout instead.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         session.revoked = True
         session.save()
+        
         return Response({'message': 'Session revoked successfully'})
     except UserSession.DoesNotExist:
         return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)

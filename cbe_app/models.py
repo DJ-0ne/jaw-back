@@ -34,6 +34,72 @@ class BaseModel(models.Model):
     class Meta:
         abstract = True
 
+
+# ==================== DEPARTMENT MANAGEMENT ====================
+
+class Department(BaseModel):
+    """School Departments - Academic, Sports, Administrative, etc."""
+    
+    department_code = models.CharField(max_length=20, unique=True)
+    department_name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    department_type = models.CharField(max_length=50, blank=True, null=True)  # e.g., Academic, Sports, Admin
+    
+    # Subjects under this department (for academic departments)
+    subjects = models.ManyToManyField('LearningArea', blank=True, related_name='departments')
+    
+    # Department Head (Staff member who leads this department)
+    head_of_department = models.ForeignKey('Staff', on_delete=models.SET_NULL, null=True, blank=True, related_name='headed_department')
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['department_name']
+    
+    def __str__(self):
+        return self.department_name
+
+class DepartmentStaffAssignment(BaseModel):
+    """Track which staff belong to which department"""
+    
+    ROLE_CHOICES = [
+        ('head', 'Head of Department'),
+        ('deputy_head', 'Deputy Head'),
+        ('member', 'Member'),
+    ]
+    
+    staff = models.ForeignKey('Staff', on_delete=models.CASCADE, related_name='department_assignments')
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='staff_assignments')
+    
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
+    
+    # For teachers: which subjects they teach in this department
+    teaching_subjects = models.ManyToManyField('LearningArea', blank=True)
+    
+    # For sports: which sports they handle (simple text field)
+    sports_responsibility = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Assignment tracking
+    assigned_date = models.DateField(default=timezone.now)  # Add this field
+    end_date = models.DateField(blank=True, null=True)  # Optional: when assignment ends
+    
+    # Is this their primary department? (A staff can belong to multiple departments but one primary)
+    is_primary = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        unique_together = ['staff', 'department']
+    
+    def __str__(self):
+        return f"{self.staff.full_name} - {self.department.department_name}"
+    
+    def save(self, *args, **kwargs):
+        # If this staff is marked as Head, update the Department model
+        if self.role == 'head' and self.is_active:
+            self.department.head_of_department = self.staff
+            self.department.save()
+        super().save(*args, **kwargs)
 # ==================== USER MANAGEMENT ====================
 
 class User(AbstractUser):
@@ -54,11 +120,9 @@ class User(AbstractUser):
         ('teacher', 'Teacher'),
         ('hr_manager', 'HR Manager'),
         ('student', 'Student'),
-        ('parent', 'Parent'),
     ]
     
     role = models.CharField(max_length=30, choices=ROLE_CHOICES)
-    department = models.CharField(max_length=50, blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     mfa_enabled = models.BooleanField(default=False)
     mfa_secret = models.CharField(max_length=32, blank=True, null=True)
@@ -96,7 +160,23 @@ class User(AbstractUser):
         if self.locked_until and self.locked_until > timezone.now():
             return True
         return False
-        
+    @property
+    def department(self):
+        """Get user's primary department name (only for staff)"""
+        if hasattr(self, 'staff_profile'):
+            primary_dept = self.staff_profile.department_assignments.filter(is_primary=True, is_active=True).first()
+            if primary_dept:
+                return primary_dept.department.department_name
+        return None
+
+    @property
+    def department_object(self):
+        """Get the actual Department object"""
+        if hasattr(self, 'staff_profile'):
+            primary_dept = self.staff_profile.department_assignments.filter(is_primary=True, is_active=True).first()
+            if primary_dept:
+                return primary_dept.department
+        return None
 
 class UserSession(BaseModel):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sessions')
@@ -131,6 +211,7 @@ class Student(BaseModel):
         ('Active', 'Active'),
         ('Graduated', 'Graduated'),
         ('Transferred', 'Transferred'),
+        ('Inactive', 'Inactive'),
         ('Withdrawn', 'Withdrawn'),
         ('Suspended', 'Suspended'),
     ]
@@ -336,19 +417,31 @@ class LearningArea(BaseModel):
         return f"{self.area_code} - {self.area_name}"
 
 class Strand(BaseModel):
-    """Strands within Learning Areas"""
+    """Strands within Learning Areas — NOW GRADE-SPECIFIC (fixes shared substrands bug)"""
     learning_area = models.ForeignKey(LearningArea, on_delete=models.CASCADE, related_name='strands')
+    
+    # ── NEW FIELD (this fixes the error) ──
+    grade_level = models.ForeignKey(
+        'GradeLevel', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True, 
+        related_name='strands'
+    )
+    
     strand_code = models.CharField(max_length=10)
     strand_name = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
     display_order = models.IntegerField(default=0)
-    
+
     class Meta:
-        unique_together = ['learning_area', 'strand_code']
-        ordering = ['learning_area', 'display_order']
-    
+        unique_together = ['learning_area', 'strand_code', 'grade_level']  # ← updated for safety
+        ordering = ['learning_area', 'grade_level', 'display_order']
+
     def __str__(self):
-        return f"{self.strand_code}: {self.strand_name}"
+        grade = f" (Grade {self.grade_level.level})" if self.grade_level else ""
+        return f"{self.strand_code}: {self.strand_name}{grade}"
+    
 
 class SubStrand(BaseModel):
     """Sub-Strands within Strands"""

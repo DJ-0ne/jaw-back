@@ -13,6 +13,7 @@ from django.http import HttpResponseRedirect
 import json
 
 from .models import (
+    Department, DepartmentStaffAssignment,
     # User Management
     User, UserSession, PasswordHistory,
     
@@ -128,20 +129,124 @@ class PasswordHistoryInline(admin.TabularInline):
     def has_add_permission(self, request, obj=None):
         return False
 
+# ==================== DEPARTMENT ADMIN ====================
+
+@admin.register(Department)
+class DepartmentAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['department_code', 'department_name', 'department_type', 
+                   'head_of_department', 'staff_count', 'is_active']
+    list_filter = ['department_type', 'is_active']
+    search_fields = ['department_code', 'department_name', 'description']
+    filter_horizontal = ['subjects']
+    raw_id_fields = ['head_of_department']
+    actions = ['export_as_csv', 'activate_departments', 'deactivate_departments']
+    
+    fieldsets = (
+        ('Department Information', {
+            'fields': ('department_code', 'department_name', 'department_type', 'description')
+        }),
+        ('Academic Subjects', {
+            'fields': ('subjects',)
+        }),
+        ('Leadership', {
+            'fields': ('head_of_department',)
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+        ('Audit', {
+            'fields': ('id', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def staff_count(self, obj):
+        return obj.staff_count
+    staff_count.short_description = 'Staff Count'
+    
+    def activate_departments(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} departments activated.')
+    activate_departments.short_description = "Activate selected departments"
+    
+    def deactivate_departments(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} departments deactivated.')
+    deactivate_departments.short_description = "Deactivate selected departments"
+
+
+@admin.register(DepartmentStaffAssignment)
+class DepartmentStaffAssignmentAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['staff', 'staff_department', 'role', 'is_primary', 'is_active']
+    list_filter = ['role', 'is_primary', 'is_active', 'department']
+    search_fields = ['staff__first_name', 'staff__last_name', 'staff__staff_id', 'department__department_name']
+    raw_id_fields = ['staff', 'department']
+    filter_horizontal = ['teaching_subjects']
+    actions = ['export_as_csv', 'set_as_primary', 'activate_assignments', 'deactivate_assignments']
+    
+    fieldsets = (
+        ('Assignment Details', {
+            'fields': ('staff', 'department', 'role')
+        }),
+        ('Responsibilities', {
+            'fields': ('teaching_subjects', 'sports_responsibility')
+        }),
+        ('Assignment Status', {
+            'fields': ('is_primary', 'is_active')
+        }),
+        ('Audit', {
+            'fields': ('id', 'assigned_date', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def staff_department(self, obj):
+        return obj.department.department_name
+    staff_department.short_description = 'Department'
+    
+    def set_as_primary(self, request, queryset):
+        # First, remove primary flag from other assignments for these staff
+        for assignment in queryset:
+            DepartmentStaffAssignment.objects.filter(
+                staff=assignment.staff, 
+                is_primary=True
+            ).exclude(id=assignment.id).update(is_primary=False)
+        
+        # Then set selected as primary
+        updated = queryset.update(is_primary=True)
+        self.message_user(request, f'{updated} assignments set as primary.')
+    set_as_primary.short_description = "Set as primary department"
+    
+    def activate_assignments(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} assignments activated.')
+    activate_assignments.short_description = "Activate selected assignments"
+    
+    def deactivate_assignments(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} assignments deactivated.')
+    deactivate_assignments.short_description = "Deactivate selected assignments"
+    
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # If this assignment is primary, ensure other assignments for this staff are not primary
+        if obj.is_primary:
+            DepartmentStaffAssignment.objects.filter(
+                staff=obj.staff, 
+                is_primary=True
+            ).exclude(id=obj.id).update(is_primary=False)
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin, BaseModelAdmin, ExportCsvMixin):
-    list_display = ['username', 'email', 'user_code', 'role', 'department', 
+    list_display = ['username', 'email', 'user_code', 'role', 'get_department', 
                    'is_active', 'is_locked', 'mfa_enabled', 'last_login']
-    list_filter = ['role', 'is_active', 'mfa_enabled', 'department', 'is_staff', 'is_superuser']
+    list_filter = ['role', 'is_active', 'mfa_enabled', 'is_staff', 'is_superuser']
     search_fields = ['username', 'email', 'user_code', 'first_name', 'last_name']
     ordering = ['username']
     
-    # Define fieldsets without created_at/updated_at since User model doesn't have them
+    # Define fieldsets WITHOUT department field
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('Personal Info', {'fields': ('first_name', 'last_name', 'email', 'phone', 'user_code')}),
-        ('Role & Department', {'fields': ('role', 'department')}),
-        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        ('Role & Permissions', {'fields': ('role', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Security', {'fields': ('mfa_enabled', 'mfa_secret', 'last_password_change', 
                                 'failed_attempts', 'locked_until')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
@@ -157,6 +262,16 @@ class UserAdmin(BaseUserAdmin, BaseModelAdmin, ExportCsvMixin):
         if obj:  # Editing existing object
             return self.readonly_fields + ['username']
         return self.readonly_fields
+    
+    def get_department(self, obj):
+        """Get department from staff profile"""
+        if hasattr(obj, 'staff_profile'):
+            primary_dept = obj.staff_profile.department_assignments.filter(is_primary=True, is_active=True).first()
+            if primary_dept:
+                return primary_dept.department.department_name
+        return '-'
+    get_department.short_description = 'Department'
+    get_department.admin_order_field = 'staff_profile__department_assignments__department__department_name'
     
     def unlock_accounts(self, request, queryset):
         updated = queryset.update(failed_attempts=0, locked_until=None)
@@ -925,10 +1040,10 @@ class StaffPayrollComponentInline(admin.TabularInline):
 
 @admin.register(Staff)
 class StaffAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff_id', 'full_name', 'designation', 'department', 
+    list_display = ['staff_id', 'full_name', 'designation', 'get_departments', 
                    'employment_type', 'status', 'user_link']
-    list_filter = ['status', 'employment_type', 'department', 'gender']
-    search_fields = ['staff_id', 'first_name', 'last_name', 'national_id', 'email']
+    list_filter = ['status', 'employment_type', 'gender']
+    search_fields = ['staff_id', 'first_name', 'last_name', 'national_id', 'personal_email']
     raw_id_fields = ['user', 'reporting_to', 'created_by', 'updated_by']
     inlines = [StaffLeaveInline, LeaveBalanceInline, StaffPayrollComponentInline]
     actions = ['export_as_csv', 'activate_staff', 'deactivate_staff']
@@ -953,7 +1068,7 @@ class StaffAdmin(BaseModelAdmin, ExportCsvMixin):
         }),
         ('Employment', {
             'fields': ('employment_type', 'employment_date', 'confirmation_date',
-                      'contract_end_date', 'department', 'designation', 'job_grade',
+                      'contract_end_date', 'designation', 'job_grade',
                       'reporting_to')
         }),
         ('Qualifications', {
@@ -981,6 +1096,14 @@ class StaffAdmin(BaseModelAdmin, ExportCsvMixin):
     def full_name(self, obj):
         return obj.full_name
     full_name.short_description = 'Full Name'
+    
+    def get_departments(self, obj):
+        """Get all departments for this staff"""
+        departments = obj.department_assignments.filter(is_active=True)
+        if departments.exists():
+            return ", ".join([f"{d.department.department_name} ({d.get_role_display()})" for d in departments])
+        return '-'
+    get_departments.short_description = 'Departments'
     
     def user_link(self, obj):
         if obj.user:
