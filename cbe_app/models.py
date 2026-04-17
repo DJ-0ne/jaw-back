@@ -203,7 +203,7 @@ class PasswordHistory(models.Model):
     password_hash = models.CharField(max_length=255)
     changed_at = models.DateTimeField(auto_now_add=True)
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='changed_passwords')
-
+    
 # ==================== STUDENT MANAGEMENT ====================
 class Student(BaseModel):
     GENDER_CHOICES = [('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')]
@@ -224,6 +224,15 @@ class Student(BaseModel):
     # Core Information
     admission_no = models.CharField(max_length=30, unique=True)
     student_uid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    
+    # NEMIS Compliance Fields (NEW)
+    upi_number = models.CharField(max_length=50, unique=True, blank=True, null=True, 
+                                   help_text="Unique Personal Identifier from NEMIS")
+    knec_number = models.CharField(max_length=50, unique=True, blank=True, null=True,
+                                    help_text="KNEC registration number")
+    birth_certificate_no = models.CharField(max_length=50, unique=True, blank=True, null=True,
+                                             help_text="Birth certificate number")
+    
     first_name = models.CharField(max_length=50)
     middle_name = models.CharField(max_length=50, blank=True, null=True)
     last_name = models.CharField(max_length=50)
@@ -245,11 +254,8 @@ class Student(BaseModel):
                              validators=[RegexValidator(regex=r'^\+?[0-9\s\-\(\)]+$')])
     email = models.EmailField(unique=True, blank=True, null=True)
     
-    # Academic Information
+    # Academic Information (REMOVED: current_section, stream, roll_number, expected_graduation_date)
     current_class = models.ForeignKey('Class', on_delete=models.SET_NULL, null=True, related_name='current_students')
-    current_section = models.CharField(max_length=10, blank=True, null=True)
-    stream = models.CharField(max_length=20, blank=True, null=True)
-    roll_number = models.IntegerField(blank=True, null=True)
     admission_date = models.DateField(default=timezone.now)
     admission_type = models.CharField(max_length=20, choices=ADMISSION_TYPE_CHOICES, default='Regular')
     
@@ -257,7 +263,6 @@ class Student(BaseModel):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Active')
     status_reason = models.TextField(blank=True, null=True)
     status_changed_date = models.DateField(blank=True, null=True)
-    expected_graduation_date = models.DateField(blank=True, null=True)
     
     # Guardian Information
     father_name = models.CharField(max_length=100, blank=True, null=True)
@@ -297,36 +302,30 @@ class Student(BaseModel):
     @property
     def full_name(self):
         return f"{self.first_name} {self.middle_name + ' ' if self.middle_name else ''}{self.last_name}"
-    # Add this method to your Student model in models.py
-
+    
     @classmethod
-    def get_next_admission_number(cls, prefix='ADM', year=None, month=None):
+    def get_next_admission_number(cls, prefix='ADM/JWB'):
         """
-        Get the next admission number in sequence
+        Get the next admission number in sequence for new format: PREFIX-XXX
         """
-        if year is None:
-            year = datetime.now().year
-        if month is None:
-            month = datetime.now().month
-        
-        # Get the highest sequence for this year and month
-        students = cls.objects.filter(
-            admission_no__startswith=f"{prefix}-{year}{str(month).zfill(2)}-"
-        )
+        # Get the highest sequence number
+        students = cls.objects.filter(admission_no__startswith=f"{prefix}-")
         
         highest_sequence = 0
         for student in students:
             try:
                 parts = student.admission_no.split('-')
-                if len(parts) == 3:
-                    sequence = int(parts[2])
+                if len(parts) == 2:
+                    sequence = int(parts[1])
                     if sequence > highest_sequence:
                         highest_sequence = sequence
             except (ValueError, IndexError):
                 continue
         
         next_sequence = highest_sequence + 1
-        return f"{prefix}-{year}{str(month).zfill(2)}-{next_sequence}"
+        sequence_str = str(next_sequence).zfill(3)
+        return f"{prefix}-{sequence_str}"
+    
     class Meta:
         indexes = [
             models.Index(fields=['admission_no']),
@@ -334,6 +333,9 @@ class Student(BaseModel):
             models.Index(fields=['status']),
             models.Index(fields=['guardian_phone']),
             models.Index(fields=['user']),
+            models.Index(fields=['upi_number']),
+            models.Index(fields=['knec_number']),
+            models.Index(fields=['birth_certificate_no']),
         ]
     
     def __str__(self):
@@ -412,6 +414,11 @@ class LearningArea(BaseModel):
     
     class Meta:
         ordering = ['area_code']
+        indexes = [
+            models.Index(fields=['area_code']),
+            models.Index(fields=['area_type']),
+            models.Index(fields=['is_active']),
+        ]
     
     def __str__(self):
         return f"{self.area_code} - {self.area_name}"
@@ -435,8 +442,13 @@ class Strand(BaseModel):
     display_order = models.IntegerField(default=0)
 
     class Meta:
-        unique_together = ['learning_area', 'strand_code', 'grade_level']  # ← updated for safety
+        unique_together = ['learning_area', 'strand_code', 'grade_level']
         ordering = ['learning_area', 'grade_level', 'display_order']
+        indexes = [
+            models.Index(fields=['learning_area']),
+            models.Index(fields=['grade_level']),
+            models.Index(fields=['strand_code']),
+        ]
 
     def __str__(self):
         grade = f" (Grade {self.grade_level.level})" if self.grade_level else ""
@@ -454,6 +466,10 @@ class SubStrand(BaseModel):
     class Meta:
         unique_together = ['strand', 'substrand_code']
         ordering = ['strand', 'display_order']
+        indexes = [
+            models.Index(fields=['strand']),
+            models.Index(fields=['substrand_code']),
+        ]
     
     def __str__(self):
         return f"{self.substrand_code}: {self.substrand_name}"
@@ -491,6 +507,11 @@ class Competency(BaseModel):
     class Meta:
         unique_together = ['substrand', 'competency_code']
         ordering = ['substrand', 'display_order']
+        indexes = [
+            models.Index(fields=['substrand']),
+            models.Index(fields=['competency_code']),
+            models.Index(fields=['is_core_competency']),
+        ]
     
     def __str__(self):
         return f"{self.competency_code}: {self.competency_statement[:100]}..."
@@ -2469,6 +2490,107 @@ class CurriculumMapping(models.Model):
         return f"{self.grade_level.name} - {self.learning_area.area_name}"
 
 
+# ==================== CURRICULUM MANAGEMENT MODELS ====================
+
+class CurriculumVersion(BaseModel):
+    """Curriculum version for different academic years"""
+    name = models.CharField(max_length=100)
+    academic_year = models.CharField(max_length=9)
+    is_active = models.BooleanField(default=False)
+    is_published = models.BooleanField(default=False)
+    published_at = models.DateTimeField(blank=True, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_curriculum_versions')
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['academic_year']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['is_published']),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.academic_year})"
+
+
+class LearningOutcome(BaseModel):
+    """Learning outcomes for sub-strands"""
+    DOMAIN_CHOICES = [
+        ('cognitive', 'Cognitive (Knowledge)'),
+        ('psychomotor', 'Psychomotor (Skills)'),
+        ('affective', 'Affective (Values/Attitudes)'),
+    ]
+    
+    substrand = models.ForeignKey(SubStrand, on_delete=models.CASCADE, related_name='learning_outcomes')
+    description = models.TextField()
+    domain = models.CharField(max_length=20, choices=DOMAIN_CHOICES, default='cognitive')
+    competencies = models.JSONField(default=list, blank=True, help_text="List of competency codes associated")
+    display_order = models.IntegerField(default=0)
+    
+    class Meta:
+        ordering = ['substrand', 'display_order']
+        indexes = [
+            models.Index(fields=['substrand']),
+            models.Index(fields=['domain']),
+        ]
+    
+    def __str__(self):
+        return self.description[:100]
+
+
+class CoreCompetency(BaseModel):
+    """KICD Core Competencies (7 competencies)"""
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    indicators = models.JSONField(default=list, blank=True)
+    display_order = models.IntegerField(default=0)
+    
+    class Meta:
+        verbose_name_plural = "Core Competencies"
+        ordering = ['display_order', 'code']
+    
+    def __str__(self):
+        return f"{self.code}: {self.name}"
+
+
+class CoreValue(BaseModel):
+    """KICD Core Values (7 values)"""
+    name = models.CharField(max_length=50, unique=True)
+    code = models.CharField(max_length=10, blank=True)
+    description = models.TextField(blank=True, null=True)
+    indicators = models.JSONField(default=list, blank=True)
+    display_order = models.IntegerField(default=0)
+    
+    class Meta:
+        ordering = ['display_order', 'name']
+    
+    def __str__(self):
+        return self.name
+
+
+class WeightConfiguration(BaseModel):
+    """SBA vs Summative weight configuration"""
+    sba_weight = models.IntegerField(default=40, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    exam_weight = models.IntegerField(default=60, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_weight_configs')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_weight_configs')
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def clean(self):
+        if self.sba_weight + self.exam_weight != 100:
+            raise ValidationError("SBA weight and Exam weight must add up to 100%")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"SBA: {self.sba_weight}% | Exam: {self.exam_weight}%"
+
 class StudentPortfolio(models.Model):
     """Track student progress on competencies"""
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='portfolios')
@@ -2530,3 +2652,4 @@ class FinancialSetting(BaseModel):
     
     def __str__(self):
         return f"{self.get_setting_key_display()}: {self.setting_value}"
+    

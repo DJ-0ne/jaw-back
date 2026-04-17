@@ -27,7 +27,8 @@ from .models import (
     AssessmentWindow, SummativeAssessment, SummativeRating, TermlySummary,
     
     # Academics
-    Class, ClassSubjectAllocation,
+    Class, ClassSubjectAllocation,CurriculumVersion, LearningOutcome, CoreCompetency, 
+    CoreValue, WeightConfiguration,
     
     # E-Learning
     Course, CourseModule, LearningContent, StudentEnrollment, ContentProgress,
@@ -323,17 +324,23 @@ class StudentAcademicHistoryInline(admin.TabularInline):
 
 @admin.register(Student)
 class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['admission_no', 'full_name', 'current_class', 'stream', 
+    list_display = ['admission_no', 'full_name', 'current_class', 'upi_number', 'knec_number',
                    'status', 'gender', 'guardian_phone', 'user_link']
     list_filter = ['status', 'gender', 'current_class', 'admission_type', 
                   'nationality', 'religion']
     search_fields = ['admission_no', 'first_name', 'middle_name', 'last_name', 
+                    'upi_number', 'knec_number', 'birth_certificate_no',
                     'guardian_phone', 'guardian_email']
     readonly_fields = ['id', 'student_uid', 'created_at', 'updated_at', 'full_name_display']
     
     fieldsets = (
         ('Student Identification', {
             'fields': ('id', 'student_uid', 'admission_no', 'user', 'full_name_display')
+        }),
+        ('NEMIS Compliance (Government Identifiers)', {
+            'fields': ('upi_number', 'knec_number', 'birth_certificate_no'),
+            'classes': ('wide',),
+            'description': 'Unique identifiers from NEMIS system - Optional but must be unique if provided'
         }),
         ('Personal Information', {
             'fields': ('first_name', 'middle_name', 'last_name', 'date_of_birth', 
@@ -343,12 +350,10 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
             'fields': ('address', 'city', 'country', 'phone', 'email')
         }),
         ('Academic Information', {
-            'fields': ('current_class', 'current_section', 'stream', 'roll_number',
-                      'admission_date', 'admission_type')
+            'fields': ('current_class', 'admission_date', 'admission_type')
         }),
         ('Status', {
-            'fields': ('status', 'status_reason', 'status_changed_date', 
-                      'expected_graduation_date')
+            'fields': ('status', 'status_reason', 'status_changed_date')
         }),
         ('Guardian Information', {
             'fields': ('guardian_name', 'guardian_relation', 'guardian_phone', 
@@ -410,7 +415,7 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
         for student in queryset:
             if not student.user:
                 # Create user account
-                username = f"student_{student.admission_no.lower()}"
+                username = f"student_{student.admission_no.lower().replace('/', '_')}"
                 password = secrets.token_urlsafe(8)
                 
                 user = User.objects.create_user(
@@ -435,6 +440,7 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
             obj.created_by = request.user
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
+
 
 @admin.register(StudentAcademicHistory)
 class StudentAcademicHistoryAdmin(BaseModelAdmin, ExportCsvMixin):
@@ -1504,9 +1510,7 @@ class CBEReportCardAdmin(BaseModelAdmin, ExportCsvMixin):
         self.message_user(request, f'PDF generation initiated for {queryset.count()} reports.')
     generate_pdf.short_description = "Generate PDF for selected reports"
 
-# ==================== REGISTER REMAINING MODELS ====================
 
-# Register any models that might have been missed
 @admin.register(GeneralLedger)
 class GeneralLedgerAdmin(BaseModelAdmin, ExportCsvMixin):
     list_display = ['gl_date', 'account_code', 'account_name', 'debit_amount', 
@@ -1542,3 +1546,36 @@ class StaffPayrollComponentAdmin(BaseModelAdmin, ExportCsvMixin):
     search_fields = ['staff__staff_id', 'component__component_name']
     raw_id_fields = ['staff', 'component', 'approved_by', 'created_by']
     actions = ['export_as_csv']
+    
+# Register new models
+@admin.register(CurriculumVersion)
+class CurriculumVersionAdmin(admin.ModelAdmin):
+    list_display = ['name', 'academic_year', 'is_active', 'is_published', 'created_at']
+    list_filter = ['is_active', 'is_published']
+    search_fields = ['name', 'academic_year']
+
+
+@admin.register(LearningOutcome)
+class LearningOutcomeAdmin(admin.ModelAdmin):
+    list_display = ['description', 'substrand', 'domain']
+    list_filter = ['domain']
+    search_fields = ['description', 'substrand__substrand_name']
+    raw_id_fields = ['substrand']
+
+
+@admin.register(CoreCompetency)
+class CoreCompetencyAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name']
+    search_fields = ['code', 'name']
+
+
+@admin.register(CoreValue)
+class CoreValueAdmin(admin.ModelAdmin):
+    list_display = ['name', 'code']
+    search_fields = ['name', 'code']
+
+
+@admin.register(WeightConfiguration)
+class WeightConfigurationAdmin(admin.ModelAdmin):
+    list_display = ['sba_weight', 'exam_weight', 'is_active', 'created_at']
+    list_filter = ['is_active']

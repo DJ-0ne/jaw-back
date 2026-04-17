@@ -36,7 +36,7 @@ def check_active_session_exists(user):
     """Check if user already has an active session"""
     return UserSession.objects.filter(
         user=user,
-        revoked=False,
+        revoked=False ,
         expires_at__gt=timezone.now()
     ).exists()
 
@@ -93,11 +93,11 @@ def login(request):
         user = serializer.validated_data['user']
         
         # CHECK IF USER ALREADY HAS AN ACTIVE SESSION
-        if check_active_session_exists(user):
-            return Response({
-                'error': 'User is already logged in on another device. Please logout from that device first.',
-                'code': 'ACTIVE_SESSION_EXISTS'
-            }, status=status.HTTP_409_CONFLICT)
+        # if check_active_session_exists(user):
+        #     return Response({
+        #         'error': 'User is already logged in on another device.',
+        #         'code': 'ACTIVE_SESSION_EXISTS'
+        #     }, status=status.HTTP_409_CONFLICT)
         
         # Generate tokens
         tokens = get_tokens_for_user(user)

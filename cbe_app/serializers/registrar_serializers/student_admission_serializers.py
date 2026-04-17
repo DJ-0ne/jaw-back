@@ -1,5 +1,3 @@
-# serializers.py - Add these to your existing serializers
-
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from ...models import Student, Class, User
@@ -24,7 +22,7 @@ class StudentSerializer(serializers.ModelSerializer):
         return obj.full_name
     
     def validate_admission_no(self, value):
-        # Check if admission number already exists (for updates)
+        # New format: PREFIX-XXX (e.g., ADM/JWB-001)
         if self.instance:
             if Student.objects.filter(admission_no=value).exclude(id=self.instance.id).exists():
                 raise ValidationError("Admission number already exists")
@@ -32,10 +30,10 @@ class StudentSerializer(serializers.ModelSerializer):
             if Student.objects.filter(admission_no=value).exists():
                 raise ValidationError("Admission number already exists")
         
-        # Validate format (PREFIX-YYYYMM-SEQUENCE)
-        pattern = r'^[A-Z]+-\d{6}-\d+$'
+        # Validate new format: PREFIX-XXX (letters, slash, hyphen, numbers)
+        pattern = r'^[A-Z/]+-\d{3}$'
         if not re.match(pattern, value):
-            raise ValidationError("Admission number must be in format: PREFIX-YYYYMM-SEQUENCE (e.g., ADM-202401-1)")
+            raise ValidationError("Admission number must be in format: PREFIX-XXX (e.g., ADM/JWB-001)")
         
         return value
     
@@ -53,6 +51,34 @@ class StudentSerializer(serializers.ModelSerializer):
         if value > datetime.now().date():
             raise ValidationError("Date of birth cannot be in the future")
         return value
+    
+    def validate_upi_number(self, value):
+        if value:
+            queryset = Student.objects.filter(upi_number=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise ValidationError("UPI number already exists")
+        return value
+    
+    def validate_knec_number(self, value):
+        if value:
+            queryset = Student.objects.filter(knec_number=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise ValidationError("KNEC number already exists")
+        return value
+    
+    def validate_birth_certificate_no(self, value):
+        if value:
+            queryset = Student.objects.filter(birth_certificate_no=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise ValidationError("Birth certificate number already exists")
+        return value
+
 
 class StudentCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,35 +87,60 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'student_uid', 'created_at', 'updated_at']
         
     def validate_email(self, value):
-        if value:  # Only validate if email is provided
-            # Check if email already exists (excluding current instance if updating)
+        if value:
             queryset = Student.objects.filter(email=value)
             if self.instance:
                 queryset = queryset.exclude(id=self.instance.id)
-            
             if queryset.exists():
                 raise serializers.ValidationError("A student with this email already exists.")
         return value
+    
+    def validate_upi_number(self, value):
+        if value:
+            queryset = Student.objects.filter(upi_number=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise serializers.ValidationError("A student with this UPI number already exists.")
+        return value
+    
+    def validate_knec_number(self, value):
+        if value:
+            queryset = Student.objects.filter(knec_number=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise serializers.ValidationError("A student with this KNEC number already exists.")
+        return value
+    
+    def validate_birth_certificate_no(self, value):
+        if value:
+            queryset = Student.objects.filter(birth_certificate_no=value)
+            if self.instance:
+                queryset = queryset.exclude(id=self.instance.id)
+            if queryset.exists():
+                raise serializers.ValidationError("A student with this birth certificate number already exists.")
+        return value
+    
     def validate_current_class(self, value):
         if value and isinstance(value, str):
             try:
                 from uuid import UUID
-                UUID(value)  # This converts "5798865b-b690-47ce-b1c3-72978952c857" to a UUID object
+                UUID(value)
                 return value
             except ValueError:
                 raise serializers.ValidationError("Invalid class ID format")
         return value
     
     def validate(self, data):
-        # Ensure either guardian or parents are provided
         if not data.get('guardian_name') and not (data.get('father_name') or data.get('mother_name')):
             raise ValidationError("Either guardian or parent information must be provided")
         
-        # Ensure emergency contact is provided
         if not data.get('emergency_contact') or not data.get('emergency_contact_name'):
             raise ValidationError("Emergency contact information is required")
         
         return data
+
 
 class StudentImportSerializer(serializers.ModelSerializer):
     class Meta:
@@ -97,40 +148,51 @@ class StudentImportSerializer(serializers.ModelSerializer):
         fields = '__all__'
     
     def validate_admission_no(self, value):
-        # Allow empty admission_no for import (will be generated)
         if not value:
             return value
         
         if Student.objects.filter(admission_no=value).exists():
             raise ValidationError(f"Admission number {value} already exists")
         
-        # Validate format if provided
-        pattern = r'^[A-Z]+-\d{6}-\d+$'
+        pattern = r'^[A-Z/]+-\d{3}$'
         if not re.match(pattern, value):
-            raise ValidationError(f"Invalid format for {value}. Must be: PREFIX-YYYYMM-SEQUENCE")
+            raise ValidationError(f"Invalid format for {value}. Must be: PREFIX-XXX (e.g., ADM/JWB-001)")
         
         return value
+    
+    def validate_upi_number(self, value):
+        if value and Student.objects.filter(upi_number=value).exists():
+            raise ValidationError(f"UPI number {value} already exists")
+        return value
+    
+    def validate_knec_number(self, value):
+        if value and Student.objects.filter(knec_number=value).exists():
+            raise ValidationError(f"KNEC number {value} already exists")
+        return value
+    
+    def validate_birth_certificate_no(self, value):
+        if value and Student.objects.filter(birth_certificate_no=value).exists():
+            raise ValidationError(f"Birth certificate number {value} already exists")
+        return value
+
 
 class AdmissionNumberConfigSerializer(serializers.Serializer):
-    """Serializer for admission number configuration"""
+    """Serializer for admission number configuration - New format"""
     last_admission_number = serializers.CharField(required=False, allow_blank=True)
-    prefix = serializers.CharField(max_length=10, default='ADM')
-    year = serializers.IntegerField()
-    month = serializers.IntegerField(min_value=1, max_value=12)
+    prefix = serializers.CharField(max_length=20, default='ADM/JWB')
     next_sequence = serializers.IntegerField(min_value=1)
     
     def validate_last_admission_number(self, value):
         if value:
-            pattern = r'^[A-Z]+-\d{6}-\d+$'
+            pattern = r'^[A-Z/]+-\d{3}$'
             if not re.match(pattern, value):
-                raise ValidationError("Last admission number must be in format: PREFIX-YYYYMM-SEQUENCE")
+                raise ValidationError("Last admission number must be in format: PREFIX-XXX (e.g., ADM/JWB-001)")
         
-        # Parse and validate sequence
         if value:
             parts = value.split('-')
-            if len(parts) == 3:
+            if len(parts) == 2:
                 try:
-                    sequence = int(parts[2])
+                    sequence = int(parts[1])
                     if sequence < 1:
                         raise ValidationError("Sequence number must be positive")
                 except ValueError:
