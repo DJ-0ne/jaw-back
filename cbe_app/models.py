@@ -1370,8 +1370,41 @@ class StudentDisciplinePoints(BaseModel):
     def __str__(self):
         return f"{self.student.admission_no} - {self.academic_year} {self.term}"
 
-# ==================== HUMAN RESOURCES ====================
+
+# ==================== HR & STAFF MANAGEMENT MODELS ====================
+
+class TeacherCategory(models.Model):
+    """CBE Teacher Categories"""
+    name = models.CharField(max_length=50, unique=True)  # PP, Early Primary, JSS
+    code = models.CharField(max_length=10, unique=True)  # PP, EP, JSS
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        verbose_name_plural = "Teacher Categories"
+        ordering = ['code']
+    
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class JSSDepartment(models.Model):
+    """Departments for JSS Teachers (STEM, Humanities, Languages, etc.)"""
+    name = models.CharField(max_length=50, unique=True)
+    code = models.CharField(max_length=10, unique=True)
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
 class Staff(BaseModel):
+    """Staff Model - Clean version with proper relationships"""
+    
     EMPLOYMENT_TYPE_CHOICES = [
         ('Permanent', 'Permanent'),
         ('Contract', 'Contract'),
@@ -1379,117 +1412,139 @@ class Staff(BaseModel):
         ('Part-time', 'Part-time'),
         ('Intern', 'Intern'),
     ]
-    GENDER_CHOICES = [('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')]
-    MARITAL_STATUS_CHOICES = [
-        ('Single', 'Single'),
-        ('Married', 'Married'),
-        ('Divorced', 'Divorced'),
-        ('Widowed', 'Widowed'),
-    ]
+    
     STATUS_CHOICES = [
         ('Active', 'Active'),
         ('On Leave', 'On Leave'),
         ('Suspended', 'Suspended'),
-        ('Resigned', 'Resigned'),
         ('Terminated', 'Terminated'),
-        ('Retired', 'Retired'),
-        ('Deceased', 'Deceased'),
-    ]
-    PAYMENT_MODE_CHOICES = [
-        ('Bank Transfer', 'Bank Transfer'),
-        ('Cheque', 'Cheque'),
-        ('Cash', 'Cash'),
+        ('Resigned', 'Resigned'),
     ]
     
+    GENDER_CHOICES = [
+        ('Male', 'Male'),
+        ('Female', 'Female'),
+    ]
+    
+    # Basic Information
     staff_id = models.CharField(max_length=30, unique=True)
-    user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_profile')
+    user = models.OneToOneField('User', on_delete=models.SET_NULL, null=True, blank=True, related_name='staff_profile')
     
-    # Personal details
-    title = models.CharField(max_length=10, blank=True, null=True)
     first_name = models.CharField(max_length=50)
     middle_name = models.CharField(max_length=50, blank=True, null=True)
     last_name = models.CharField(max_length=50)
     date_of_birth = models.DateField()
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES)
-    marital_status = models.CharField(max_length=20, choices=MARITAL_STATUS_CHOICES, blank=True, null=True)
     
     # Contact
-    personal_email = models.EmailField(blank=True, null=True)
-    personal_phone = models.CharField(max_length=20, blank=True, null=True)
-    emergency_contact = models.CharField(max_length=20)
-    emergency_contact_name = models.CharField(max_length=100)
-    emergency_relation = models.CharField(max_length=30, blank=True, null=True)
-    
-    # Address
+    personal_email = models.EmailField(unique=True)
+    personal_phone = models.CharField(max_length=20, unique=True)
     permanent_address = models.TextField(blank=True, null=True)
-    temporary_address = models.TextField(blank=True, null=True)
-    city = models.CharField(max_length=50, blank=True, null=True)
-    country = models.CharField(max_length=50, default='Kenya')
     
     # Identification
-    national_id = models.CharField(max_length=20, unique=True, blank=True, null=True)
-    passport_no = models.CharField(max_length=20, unique=True, blank=True, null=True)
-    kra_pin = models.CharField(max_length=20, blank=True, null=True)
-    nssf_no = models.CharField(max_length=20, blank=True, null=True)
-    nhif_no = models.CharField(max_length=20, blank=True, null=True)
+    national_id = models.CharField(max_length=20, unique=True)
     
     # Employment
-    employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
-    employment_date = models.DateField()
-    confirmation_date = models.DateField(blank=True, null=True)
+    employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES, default='Permanent')
+    employment_date = models.DateField(default=timezone.now)
     contract_end_date = models.DateField(blank=True, null=True)
-    department = models.CharField(max_length=50)
+    
+    # CBE Teacher Categorization
+    teacher_category = models.ForeignKey(
+        TeacherCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_members'
+    )
+    
+    # For JSS Teachers only
+    jss_department = models.ForeignKey(
+        JSSDepartment,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_members'
+    )
+    
+    # For PP and Early Primary Teachers only
+    assigned_grade_level = models.ForeignKey(
+        'GradeLevel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_teachers'
+    )
+    
+    # Auto-generated Teacher Code (Immutable)
+    teacher_code = models.CharField(max_length=20, unique=True, blank=True, null=True)
+    
+    # General Department (Administrative)
+    admin_department = models.ForeignKey(
+        'Department',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='staff_members'
+    )
+    
     designation = models.CharField(max_length=50)
-    job_grade = models.CharField(max_length=10, blank=True, null=True)
-    reporting_to = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='subordinates')
+    
+    # Status
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Active')
     
     # Qualifications
     highest_qualification = models.CharField(max_length=100, blank=True, null=True)
     specialization = models.TextField(blank=True, null=True)
-    university = models.CharField(max_length=100, blank=True, null=True)
-    year_of_graduation = models.IntegerField(blank=True, null=True)
-    
-    # Bank details
-    bank_name = models.CharField(max_length=100, blank=True, null=True)
-    bank_branch = models.CharField(max_length=100, blank=True, null=True)
-    account_name = models.CharField(max_length=100, blank=True, null=True)
-    account_number = models.CharField(max_length=30, blank=True, null=True)
-    
-    # Salary
-    basic_salary = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True, validators=[MinValueValidator(0)])
-    salary_currency = models.CharField(max_length=3, default='KES')
-    payment_mode = models.CharField(max_length=20, choices=PAYMENT_MODE_CHOICES, blank=True, null=True)
-    
-    # Status
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Active')
-    status_date = models.DateField(blank=True, null=True)
-    status_reason = models.TextField(blank=True, null=True)
-    exit_interview_conducted = models.BooleanField(default=False)
-    exit_interview_notes = models.TextField(blank=True, null=True)
-    
-    # Documents
-    photo_url = models.CharField(max_length=255, blank=True, null=True)
-    documents = models.JSONField(default=dict, blank=True)
     
     # Audit
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_staff')
-    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='updated_staff')
-    archived = models.BooleanField(default=False)
+    created_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, related_name='created_staff')
+    updated_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, related_name='updated_staff')
     
     class Meta:
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['department']),
+            models.Index(fields=['staff_id']),
+            models.Index(fields=['teacher_code']),
+            models.Index(fields=['teacher_category']),
             models.Index(fields=['status']),
-            models.Index(fields=['employment_type']),
         ]
     
     @property
     def full_name(self):
-        return f"{self.title + ' ' if self.title else ''}{self.first_name} {self.middle_name + ' ' if self.middle_name else ''}{self.last_name}"
+        return f"{self.first_name} {self.middle_name + ' ' if self.middle_name else ''}{self.last_name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate teacher_code based on category
+        if not self.teacher_code and self.teacher_category:
+            prefix = self.teacher_category.code  # PP, EP, or JSS
+            
+            # Get highest sequence number for this prefix
+            existing = Staff.objects.filter(teacher_code__startswith=prefix)
+            max_num = 0
+            for staff in existing:
+                if staff.teacher_code and staff.teacher_code.startswith(prefix):
+                    try:
+                        num = int(staff.teacher_code[len(prefix):])
+                        if num > max_num:
+                            max_num = num
+                    except ValueError:
+                        pass
+            
+            sequence = max_num + 1
+            self.teacher_code = f"{prefix}{sequence:03d}"
+        
+        # Auto-generate staff_id if not set
+        if not self.staff_id:
+            date_part = timezone.now().strftime('%Y%m')
+            random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+            self.staff_id = f"STF-{date_part}-{random_part}"
+        
+        super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.full_name} ({self.staff_id})"
-
+        return f"{self.full_name} ({self.teacher_code or self.staff_id})"
+    
 class StaffLeave(BaseModel):
     LEAVE_TYPE_CHOICES = [
         ('Annual', 'Annual'),
@@ -2653,3 +2708,244 @@ class FinancialSetting(BaseModel):
     def __str__(self):
         return f"{self.get_setting_key_display()}: {self.setting_value}"
     
+    
+    
+# ==================== EXAM MANAGEMENT MODELS ====================
+
+class Exam(BaseModel):
+    """Main Exam/Assessment Model - Compatible with frontend"""
+    
+    EXAM_TYPE_CHOICES = [
+        ('cba', 'Classroom-Based Assessment (CBA)'),
+        ('sba', 'School-Based Assessment (SBA)'),
+        ('cat', 'Continuous Assessment Test (CAT)'),
+        ('end_term', 'End of Term Exam'),
+        ('mock', 'Mock Exam'),
+        ('kpsea', 'KPSEA (Grade 6)'),
+        ('kjsea', 'KJSEA (Grade 9)'),
+        ('other', 'Other'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('scheduled', 'Scheduled'),
+        ('live', 'Live'),
+        ('marking', 'Marking'),
+        ('moderation', 'Moderation'),
+        ('published', 'Published'),
+        ('archived', 'Archived'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    GRADE_LEVEL_CHOICES = [
+        ('pp1', 'Pre-Primary 1'),
+        ('pp2', 'Pre-Primary 2'),
+        ('1', 'Grade 1'),
+        ('2', 'Grade 2'),
+        ('3', 'Grade 3'),
+        ('4', 'Grade 4'),
+        ('5', 'Grade 5'),
+        ('6', 'Grade 6'),
+        ('7', 'Grade 7'),
+        ('8', 'Grade 8'),
+        ('9', 'Grade 9'),
+    ]
+    
+    # Basic Information
+    exam_code = models.CharField(max_length=20, unique=True)
+    title = models.CharField(max_length=200)
+    exam_type = models.CharField(max_length=20, choices=EXAM_TYPE_CHOICES)
+    grade_level = models.CharField(max_length=10, choices=GRADE_LEVEL_CHOICES)
+    academic_year = models.IntegerField(default=timezone.now().year)
+    term = models.IntegerField(choices=[(1, 'Term 1'), (2, 'Term 2'), (3, 'Term 3')], default=1)
+    
+    # Dates & Duration
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    duration_minutes = models.IntegerField(default=180)
+    
+    # Marks
+    total_marks = models.IntegerField(default=100)
+    passing_marks = models.IntegerField(default=50)
+    
+    # Status & Workflow
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    # Content
+    instructions = models.TextField(blank=True, null=True)
+    subjects = models.JSONField(default=list, blank=True)  # List of subject names
+    classes = models.JSONField(default=list, blank=True)   # List of class IDs
+    marking_scheme = models.TextField(blank=True, null=True)
+    weighting = models.JSONField(default=dict, blank=True)  # {subject: weight}
+    
+    # Schedule
+    room_allocation = models.JSONField(default=list, blank=True)  # [{subject, room, date, time}]
+    invigilators = models.JSONField(default=list, blank=True)     # List of teacher IDs
+    
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_exams')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='updated_exams')
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['exam_code']),
+            models.Index(fields=['status']),
+            models.Index(fields=['exam_type']),
+            models.Index(fields=['academic_year', 'term']),
+        ]
+    
+    def __str__(self):
+        return f"{self.exam_code} - {self.title}"
+
+
+class ExamSchedule(BaseModel):
+    """Individual subject schedule for an exam"""
+    
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='exam_schedules')
+    subject = models.CharField(max_length=100)
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    room = models.CharField(max_length=50, blank=True, null=True)
+    invigilator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='invigilated_schedules')
+    class_id = models.CharField(max_length=50, blank=True, null=True)  # Class ID for this schedule
+    
+    class Meta:
+        ordering = ['date', 'start_time']
+        indexes = [
+            models.Index(fields=['exam', 'date']),
+            models.Index(fields=['subject']),
+        ]
+    
+    def __str__(self):
+        return f"{self.exam.exam_code} - {self.subject} on {self.date}"
+
+
+class ExamMarker(BaseModel):
+    """Teacher assigned to mark a specific exam subject"""
+    
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='markers')
+    subject = models.CharField(max_length=100)
+    teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='marking_assignments')
+    
+    class Meta:
+        unique_together = ['exam', 'subject', 'teacher']
+    
+    def __str__(self):
+        return f"{self.exam.exam_code} - {self.subject} - {self.teacher.get_full_name()}"
+
+
+class ExamModeration(BaseModel):
+    """Moderation record for an exam"""
+    
+    exam = models.OneToOneField(Exam, on_delete=models.CASCADE, related_name='moderation')
+    moderator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='moderated_exams')
+    notes = models.TextField(blank=True, null=True)
+    approved = models.BooleanField(default=False)
+    moderated_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f"Moderation for {self.exam.exam_code}"
+
+
+class ExamPermission(BaseModel):
+    """Global or exam-specific permissions"""
+    
+    PERMISSION_TYPE_CHOICES = [
+        ('global', 'Global'),
+        ('exam', 'Exam Specific'),
+    ]
+    
+    permission_type = models.CharField(max_length=10, choices=PERMISSION_TYPE_CHOICES, default='global')
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, null=True, blank=True, related_name='permissions')
+    
+    # Settings
+    school_wide_mark_uploading = models.BooleanField(default=False)
+    require_moderation = models.BooleanField(default=True)
+    auto_publish = models.BooleanField(default=False)
+    
+    # Grade level permissions (JSON: {class_id: true/false})
+    grade_level_permissions = models.JSONField(default=dict, blank=True)
+    
+    # Subject teacher permissions (JSON: {subject: [teacher_ids]})
+    subject_teacher_permissions = models.JSONField(default=dict, blank=True)
+    
+    # Scheduled lock
+    lock_enabled = models.BooleanField(default=False)
+    lock_until = models.DateTimeField(null=True, blank=True)
+    
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_permissions')
+    
+    class Meta:
+        unique_together = ['permission_type', 'exam']
+    
+    def __str__(self):
+        if self.permission_type == 'global':
+            return "Global Exam Permissions"
+        return f"Permissions for {self.exam.exam_code}"
+
+
+class ExamResult(BaseModel):
+    """Student results for an exam subject"""
+    
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='results')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='exam_results')
+    subject = models.CharField(max_length=100)
+    marks_obtained = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    percentage = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    grade = models.CharField(max_length=10, blank=True, null=True)
+    remarks = models.TextField(blank=True, null=True)
+    
+    # Marking
+    marked_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='marked_results')
+    marked_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['exam', 'student', 'subject']
+        indexes = [
+            models.Index(fields=['exam', 'student']),
+            models.Index(fields=['subject']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Calculate percentage
+        if self.marks_obtained and self.exam.total_marks:
+            self.percentage = (self.marks_obtained / self.exam.total_marks) * 100
+        
+        # Calculate grade based on exam's grade level
+        if self.percentage:
+            if self.exam.grade_level in ['pp1', 'pp2', '1', '2', '3', '4', '5']:
+                # 4-point scale
+                if self.percentage >= 90:
+                    self.grade = 'EE'
+                elif self.percentage >= 75:
+                    self.grade = 'ME'
+                elif self.percentage >= 58:
+                    self.grade = 'AE'
+                else:
+                    self.grade = 'BE'
+            else:
+                # 8-point scale
+                if self.percentage >= 90:
+                    self.grade = 'EE1'
+                elif self.percentage >= 75:
+                    self.grade = 'EE2'
+                elif self.percentage >= 58:
+                    self.grade = 'ME1'
+                elif self.percentage >= 41:
+                    self.grade = 'ME2'
+                elif self.percentage >= 31:
+                    self.grade = 'AE1'
+                elif self.percentage >= 21:
+                    self.grade = 'AE2'
+                elif self.percentage >= 11:
+                    self.grade = 'BE1'
+                else:
+                    self.grade = 'BE2'
+        
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.exam.exam_code} - {self.student.admission_no} - {self.subject}: {self.marks_obtained}"

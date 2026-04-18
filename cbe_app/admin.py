@@ -23,6 +23,9 @@ from .models import (
     # CBE Academic Structure
     AcademicYear, Term, LearningArea, Strand, SubStrand, Competency,
     
+    #examination
+    Exam, ExamSchedule, ExamMarker, ExamModeration, 
+    ExamPermission, ExamResult,
     # Summative Assessment
     AssessmentWindow, SummativeAssessment, SummativeRating, TermlySummary,
     
@@ -43,8 +46,9 @@ from .models import (
     StudentDisciplinePoints,
     
     # Human Resources
-    Staff, StaffLeave, LeaveBalance, PayrollComponent, StaffPayrollComponent,
-    PayrollPeriod, PayrollRecord, StaffLoan, LoanRepayment,
+    Staff,  TeacherCategory, JSSDepartment, StaffLeave, LeaveBalance,
+    PayrollComponent, StaffPayrollComponent, PayrollPeriod, PayrollRecord,
+    StaffLoan, LoanRepayment,
     
     # Library
     BookResource,
@@ -1025,235 +1029,143 @@ class StudentDisciplinePointsAdmin(BaseModelAdmin, ExportCsvMixin):
     raw_id_fields = ['student']
     actions = ['export_as_csv']
 
-# ==================== HUMAN RESOURCES ADMIN ====================
+# ==================== HR & STAFF MANAGEMENT ADMIN ====================
 
-class StaffLeaveInline(admin.TabularInline):
-    model = StaffLeave
-    extra = 0
-    fk_name = 'staff'  # Specify the ForeignKey name since there might be multiple
-    fields = ['leave_type', 'start_date', 'end_date', 'total_days', 'status']
-    readonly_fields = ['total_days']
+@admin.register(TeacherCategory)
+class TeacherCategoryAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['code', 'name']
+    ordering = ['code']
 
-class LeaveBalanceInline(admin.TabularInline):
-    model = LeaveBalance
-    extra = 0
-    fields = ['leave_year', 'leave_type', 'total_entitled', 'taken_so_far', 'balance']
 
-class StaffPayrollComponentInline(admin.TabularInline):
-    model = StaffPayrollComponent
-    extra = 0
-    fields = ['component', 'custom_amount', 'custom_percentage', 'is_active']
+@admin.register(JSSDepartment)
+class JSSDepartmentAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['code', 'name']
+    ordering = ['name']
+
 
 @admin.register(Staff)
-class StaffAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff_id', 'full_name', 'designation', 'get_departments', 
-                   'employment_type', 'status', 'user_link']
-    list_filter = ['status', 'employment_type', 'gender']
-    search_fields = ['staff_id', 'first_name', 'last_name', 'national_id', 'personal_email']
-    raw_id_fields = ['user', 'reporting_to', 'created_by', 'updated_by']
-    inlines = [StaffLeaveInline, LeaveBalanceInline, StaffPayrollComponentInline]
-    actions = ['export_as_csv', 'activate_staff', 'deactivate_staff']
+class StaffAdmin(admin.ModelAdmin):
+    list_display = ['staff_id', 'teacher_code', 'full_name', 'teacher_category', 'jss_department', 'status', 'employment_type']
+    list_filter = ['status', 'employment_type', 'teacher_category', 'gender']
+    search_fields = ['staff_id', 'teacher_code', 'first_name', 'last_name', 'personal_email', 'personal_phone', 'national_id']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'teacher_code']
+    raw_id_fields = ['user', 'teacher_category', 'jss_department', 'assigned_grade_level', 'admin_department', 'created_by', 'updated_by']
     
     fieldsets = (
-        ('Staff Identification', {
-            'fields': ('id', 'staff_id', 'user')
-        }),
-        ('Personal Information', {
-            'fields': ('title', 'first_name', 'middle_name', 'last_name', 'date_of_birth',
-                      'gender', 'marital_status', 'photo_url')
-        }),
-        ('Contact Information', {
-            'fields': ('personal_email', 'personal_phone', 'emergency_contact_name',
-                      'emergency_contact', 'emergency_relation')
-        }),
-        ('Address', {
-            'fields': ('permanent_address', 'temporary_address', 'city', 'country')
-        }),
         ('Identification', {
-            'fields': ('national_id', 'passport_no', 'kra_pin', 'nssf_no', 'nhif_no')
+            'fields': ('staff_id', 'teacher_code', 'user', 'first_name', 'middle_name', 'last_name', 'date_of_birth', 'gender')
+        }),
+        ('Contact & ID', {
+            'fields': ('personal_email', 'personal_phone', 'permanent_address', 'national_id')
         }),
         ('Employment', {
-            'fields': ('employment_type', 'employment_date', 'confirmation_date',
-                      'contract_end_date', 'designation', 'job_grade',
-                      'reporting_to')
+            'fields': ('employment_type', 'employment_date', 'contract_end_date', 'designation', 'status')
+        }),
+        ('CBE Teacher Categorization', {
+            'fields': ('teacher_category', 'jss_department', 'assigned_grade_level', 'admin_department'),
+            'classes': ('collapse',)
         }),
         ('Qualifications', {
-            'fields': ('highest_qualification', 'specialization', 'university', 
-                      'year_of_graduation')
-        }),
-        ('Bank Details', {
-            'fields': ('bank_name', 'bank_branch', 'account_name', 'account_number')
-        }),
-        ('Salary', {
-            'fields': ('basic_salary', 'salary_currency', 'payment_mode')
-        }),
-        ('Status', {
-            'fields': ('status', 'status_date', 'status_reason', 'exit_interview_conducted',
-                      'exit_interview_notes')
-        }),
-        ('Documents', {
-            'fields': ('documents',)
+            'fields': ('highest_qualification', 'specialization'),
+            'classes': ('collapse',)
         }),
         ('Audit', {
-            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at', 'archived')
+            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
         }),
     )
     
     def full_name(self, obj):
         return obj.full_name
     full_name.short_description = 'Full Name'
-    
-    def get_departments(self, obj):
-        """Get all departments for this staff"""
-        departments = obj.department_assignments.filter(is_active=True)
-        if departments.exists():
-            return ", ".join([f"{d.department.department_name} ({d.get_role_display()})" for d in departments])
-        return '-'
-    get_departments.short_description = 'Departments'
-    
-    def user_link(self, obj):
-        if obj.user:
-            url = reverse('admin:cbe_app_user_change', args=[obj.user.id])
-            return format_html('<a href="{}">{}</a>', url, obj.user.username)
-        return '-'
-    user_link.short_description = 'User Account'
-    
-    def activate_staff(self, request, queryset):
-        updated = queryset.update(status='Active', status_date=timezone.now())
-        self.message_user(request, f'{updated} staff activated.')
-    activate_staff.short_description = "Activate selected staff"
-    
-    def deactivate_staff(self, request, queryset):
-        updated = queryset.update(status='Resigned', status_date=timezone.now())
-        self.message_user(request, f'{updated} staff deactivated.')
-    deactivate_staff.short_description = "Deactivate selected staff"
+
 
 @admin.register(StaffLeave)
-class StaffLeaveAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff', 'leave_type', 'start_date', 'end_date', 'total_days',
-                   'status', 'applied_date']
-    list_filter = ['leave_type', 'status', 'start_date']
-    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name']
+class StaffLeaveAdmin(admin.ModelAdmin):
+    list_display = ['staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'status', 'applied_date']
+    list_filter = ['status', 'leave_type']
+    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'reason']
     raw_id_fields = ['staff', 'approved_by', 'handover_to']
-    readonly_fields = ['total_days']
-    actions = ['export_as_csv', 'approve_leaves', 'reject_leaves']
-    
-    def approve_leaves(self, request, queryset):
-        updated = queryset.update(status='Approved', approved_by=request.user,
-                                 approved_date=timezone.now())
-        self.message_user(request, f'{updated} leaves approved.')
-    approve_leaves.short_description = "Approve selected leaves"
-    
-    def reject_leaves(self, request, queryset):
-        updated = queryset.update(status='Rejected')
-        self.message_user(request, f'{updated} leaves rejected.')
-    reject_leaves.short_description = "Reject selected leaves"
-
-@admin.register(PayrollComponent)
-class PayrollComponentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['component_code', 'component_name', 'component_type',
-                   'calculation_type', 'frequency', 'is_active']
-    list_filter = ['component_type', 'calculation_type', 'frequency', 'is_active']
-    search_fields = ['component_code', 'component_name']
-    actions = ['export_as_csv']
-
-@admin.register(PayrollPeriod)
-class PayrollPeriodAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['period_code', 'period_name', 'start_date', 'end_date',
-                   'pay_date', 'status', 'total_staff', 'total_net']
-    list_filter = ['status', 'start_date']
-    search_fields = ['period_code', 'period_name']
-    raw_id_fields = ['processed_by', 'approved_by', 'closed_by', 'locked_by']
-    actions = ['export_as_csv', 'process_payroll', 'approve_payroll', 'close_payroll']
-    
-    def process_payroll(self, request, queryset):
-        updated = queryset.update(status='Processing', processed_by=request.user,
-                                 processed_date=timezone.now())
-        self.message_user(request, f'{updated} payroll periods marked for processing.')
-    process_payroll.short_description = "Process selected payroll periods"
-    
-    def approve_payroll(self, request, queryset):
-        updated = queryset.update(status='Approved', approved_by=request.user,
-                                 approved_date=timezone.now())
-        self.message_user(request, f'{updated} payroll periods approved.')
-    approve_payroll.short_description = "Approve selected payroll periods"
-    
-    def close_payroll(self, request, queryset):
-        updated = queryset.update(status='Closed', closed_by=request.user,
-                                 closed_date=timezone.now())
-        self.message_user(request, f'{updated} payroll periods closed.')
-    close_payroll.short_description = "Close selected payroll periods"
-
-@admin.register(PayrollRecord)
-class PayrollRecordAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff', 'payroll_period', 'gross_salary', 'total_deductions',
-                   'net_salary', 'payment_status', 'is_paid']
-    list_filter = ['payment_status', 'payroll_period']
-    search_fields = ['staff__staff_id', 'staff__first_name']
-    raw_id_fields = ['staff', 'payroll_period', 'approved_by', 'calculated_by', 'paid_by']
-    readonly_fields = ['gross_salary', 'total_deductions', 'net_salary']
-    actions = ['export_as_csv', 'mark_as_paid']
-    
-    def mark_as_paid(self, request, queryset):
-        updated = queryset.update(is_paid=True, payment_status='Paid',
-                                 paid_by=request.user, paid_date=timezone.now())
-        self.message_user(request, f'{updated} payroll records marked as paid.')
-    mark_as_paid.short_description = "Mark as paid"
-
-class LoanRepaymentInline(admin.TabularInline):
-    model = LoanRepayment
-    extra = 0
-    fields = ['repayment_date', 'amount_paid', 'principal_amount', 'interest_amount',
-             'payment_method']
-    readonly_fields = ['principal_amount', 'interest_amount']
-
-@admin.register(StaffLoan)
-class StaffLoanAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['loan_id', 'staff', 'loan_type', 'loan_amount', 'interest_rate',
-                   'monthly_installment', 'status', 'outstanding_balance']
-    list_filter = ['loan_type', 'status']
-    search_fields = ['loan_id', 'staff__staff_id']
-    raw_id_fields = ['staff', 'approved_by', 'created_by']
-    inlines = [LoanRepaymentInline]
-    actions = ['export_as_csv', 'approve_loans', 'disburse_loans']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'total_days', 'applied_date']
     
     fieldsets = (
-        ('Loan Details', {
-            'fields': ('id', 'loan_id', 'staff')
-        }),
-        ('Loan Terms', {
-            'fields': ('loan_type', 'loan_amount', 'interest_rate', 'interest_type',
-                      'repayment_months', 'monthly_installment', 'start_date', 'end_date')
-        }),
-        ('Status & Disbursement', {
-            'fields': ('status', 'approved_amount', 'disbursed_amount', 'disbursement_date',
-                      'disbursement_method')
-        }),
-        ('Repayment Tracking', {
-            'fields': ('total_paid', 'total_interest_paid', 'total_principal_paid',
-                      'outstanding_balance', 'overdue_amount', 'overdue_days')
+        ('Leave Details', {
+            'fields': ('staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'reason', 'contact_during_leave')
         }),
         ('Approval', {
-            'fields': ('applied_date', 'approved_by', 'approved_date', 'rejection_reason')
+            'fields': ('status', 'approved_by', 'approved_date', 'rejection_reason')
         }),
-        ('Guarantor', {
-            'fields': ('guarantor_name', 'guarantor_contact', 'security_details')
-        }),
-        ('Audit', {
-            'fields': ('created_by', 'created_at', 'updated_at')
+        ('Handover', {
+            'fields': ('handover_notes', 'handover_to')
         }),
     )
-    
-    def approve_loans(self, request, queryset):
-        updated = queryset.update(status='Approved', approved_by=request.user,
-                                 approved_date=timezone.now())
-        self.message_user(request, f'{updated} loans approved.')
-    approve_loans.short_description = "Approve selected loans"
-    
-    def disburse_loans(self, request, queryset):
-        updated = queryset.update(status='Disbursed', disbursement_date=timezone.now())
-        self.message_user(request, f'{updated} loans marked as disbursed.')
-    disburse_loans.short_description = "Mark as disbursed"
+
+
+@admin.register(LeaveBalance)
+class LeaveBalanceAdmin(admin.ModelAdmin):
+    list_display = ['staff', 'leave_year', 'leave_type', 'total_entitled', 'taken_so_far', 'balance', 'carried_over']
+    list_filter = ['leave_year', 'leave_type']
+    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name']
+    raw_id_fields = ['staff']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+
+
+@admin.register(PayrollComponent)
+class PayrollComponentAdmin(admin.ModelAdmin):
+    list_display = ['component_code', 'component_name', 'component_type', 'calculation_type', 'is_active']
+    list_filter = ['component_type', 'calculation_type', 'is_active', 'frequency', 'is_taxable']
+    search_fields = ['component_code', 'component_name']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    raw_id_fields = ['created_by']
+
+
+@admin.register(StaffPayrollComponent)
+class StaffPayrollComponentAdmin(admin.ModelAdmin):
+    list_display = ['staff', 'component', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'component__component_code']
+    raw_id_fields = ['staff', 'component', 'approved_by', 'created_by']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+
+
+@admin.register(PayrollPeriod)
+class PayrollPeriodAdmin(admin.ModelAdmin):
+    list_display = ['period_code', 'period_name', 'start_date', 'end_date', 'pay_date', 'status', 'total_staff']
+    list_filter = ['status', 'is_locked']
+    search_fields = ['period_code', 'period_name']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'total_gross', 'total_deductions', 'total_net', 'total_paye', 'total_nssf', 'total_nhif']
+    raw_id_fields = ['processed_by', 'approved_by', 'closed_by', 'locked_by']
+
+
+@admin.register(PayrollRecord)
+class PayrollRecordAdmin(admin.ModelAdmin):
+    list_display = ['payroll_period', 'staff', 'gross_salary', 'net_salary', 'payment_status', 'is_paid']
+    list_filter = ['payment_status', 'is_paid', 'is_calculated', 'is_approved']
+    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'payroll_period__period_code']
+    raw_id_fields = ['payroll_period', 'staff', 'approved_by', 'calculated_by', 'paid_by']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'gross_salary', 'total_deductions', 'net_salary']
+
+
+@admin.register(StaffLoan)
+class StaffLoanAdmin(admin.ModelAdmin):
+    list_display = ['loan_id', 'staff', 'loan_type', 'loan_amount', 'status', 'outstanding_balance']
+    list_filter = ['status', 'loan_type', 'interest_type']
+    search_fields = ['loan_id', 'staff__staff_id', 'staff__first_name', 'staff__last_name']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'loan_id', 'outstanding_balance']
+    raw_id_fields = ['staff', 'approved_by', 'created_by']
+
+
+@admin.register(LoanRepayment)
+class LoanRepaymentAdmin(admin.ModelAdmin):
+    list_display = ['loan', 'repayment_date', 'amount_paid', 'principal_amount', 'interest_amount', 'is_overdue']
+    list_filter = ['is_overdue', 'payment_method']
+    search_fields = ['loan__loan_id', 'loan__staff__staff_id']
+    raw_id_fields = ['loan', 'processed_by']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'processed_date']
 
 # ==================== LIBRARY ADMIN ====================
 
@@ -1520,32 +1432,6 @@ class GeneralLedgerAdmin(BaseModelAdmin, ExportCsvMixin):
     raw_id_fields = ['created_by']
     actions = ['export_as_csv']
 
-@admin.register(LeaveBalance)
-class LeaveBalanceAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff', 'leave_year', 'leave_type', 'total_entitled', 
-                   'taken_so_far', 'balance', 'carried_over']
-    list_filter = ['leave_year', 'leave_type']
-    search_fields = ['staff__staff_id', 'staff__first_name']
-    raw_id_fields = ['staff']
-    actions = ['export_as_csv']
-
-@admin.register(LoanRepayment)
-class LoanRepaymentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['loan', 'repayment_date', 'amount_paid', 'principal_amount', 
-                   'interest_amount', 'payment_method']
-    list_filter = ['payment_method', 'repayment_date']
-    search_fields = ['loan__loan_id', 'loan__staff__staff_id']
-    raw_id_fields = ['loan', 'processed_by']
-    actions = ['export_as_csv']
-
-@admin.register(StaffPayrollComponent)
-class StaffPayrollComponentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['staff', 'component', 'custom_amount', 'custom_percentage', 
-                   'effective_from', 'effective_to', 'is_active']
-    list_filter = ['is_active', 'component']
-    search_fields = ['staff__staff_id', 'component__component_name']
-    raw_id_fields = ['staff', 'component', 'approved_by', 'created_by']
-    actions = ['export_as_csv']
     
 # Register new models
 @admin.register(CurriculumVersion)
@@ -1579,3 +1465,146 @@ class CoreValueAdmin(admin.ModelAdmin):
 class WeightConfigurationAdmin(admin.ModelAdmin):
     list_display = ['sba_weight', 'exam_weight', 'is_active', 'created_at']
     list_filter = ['is_active']
+    
+###############################EXAM ADMIN################################
+    
+@admin.register(Exam)
+class ExamAdmin(admin.ModelAdmin):
+    list_display = ['exam_code', 'title', 'exam_type', 'grade_level', 'academic_year', 'term', 'status', 'created_at']
+    list_filter = ['status', 'exam_type', 'grade_level', 'academic_year', 'term']
+    search_fields = ['exam_code', 'title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('exam_code', 'title', 'exam_type', 'grade_level', 'academic_year', 'term')
+        }),
+        ('Dates & Duration', {
+            'fields': ('start_date', 'end_date', 'duration_minutes')
+        }),
+        ('Marks', {
+            'fields': ('total_marks', 'passing_marks')
+        }),
+        ('Status', {
+            'fields': ('status',)
+        }),
+        ('Content', {
+            'fields': ('instructions', 'subjects', 'classes', 'marking_scheme', 'weighting')
+        }),
+        ('Schedule', {
+            'fields': ('room_allocation', 'invigilators')
+        }),
+        ('Audit', {
+            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(ExamSchedule)
+class ExamScheduleAdmin(admin.ModelAdmin):
+    list_display = ['exam_link', 'subject', 'date', 'start_time', 'end_time', 'room', 'invigilator_link']
+    list_filter = ['date', 'subject']
+    search_fields = ['exam__exam_code', 'subject', 'room']
+    raw_id_fields = ['exam', 'invigilator']
+    
+    def exam_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:cbe_app_exam_change', args=[obj.exam.id])
+        return format_html('<a href="{}">{}</a>', url, obj.exam.exam_code)
+    exam_link.short_description = 'Exam'
+    
+    def invigilator_link(self, obj):
+        if obj.invigilator:
+            from django.urls import reverse
+            url = reverse('admin:cbe_app_user_change', args=[obj.invigilator.id])
+            return format_html('<a href="{}">{}</a>', url, obj.invigilator.get_full_name())
+        return '-'
+    invigilator_link.short_description = 'Invigilator'
+
+
+@admin.register(ExamMarker)
+class ExamMarkerAdmin(admin.ModelAdmin):
+    list_display = ['exam_link', 'subject', 'teacher_link']
+    list_filter = ['subject']
+    search_fields = ['exam__exam_code', 'subject', 'teacher__first_name', 'teacher__last_name']
+    raw_id_fields = ['exam', 'teacher']
+    
+    def exam_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:cbe_app_exam_change', args=[obj.exam.id])
+        return format_html('<a href="{}">{}</a>', url, obj.exam.exam_code)
+    exam_link.short_description = 'Exam'
+    
+    def teacher_link(self, obj):
+        if obj.teacher:
+            from django.urls import reverse
+            url = reverse('admin:cbe_app_user_change', args=[obj.teacher.id])
+            return format_html('<a href="{}">{}</a>', url, obj.teacher.get_full_name())
+        return '-'
+    teacher_link.short_description = 'Teacher'
+
+
+@admin.register(ExamModeration)
+class ExamModerationAdmin(admin.ModelAdmin):
+    list_display = ['exam_link', 'moderator_link', 'approved', 'moderated_at']
+    list_filter = ['approved']
+    search_fields = ['exam__exam_code', 'notes']
+    raw_id_fields = ['exam', 'moderator']
+    readonly_fields = ['moderated_at']
+    
+    def exam_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:cbe_app_exam_change', args=[obj.exam.id])
+        return format_html('<a href="{}">{}</a>', url, obj.exam.exam_code)
+    exam_link.short_description = 'Exam'
+    
+    def moderator_link(self, obj):
+        if obj.moderator:
+            from django.urls import reverse
+            url = reverse('admin:cbe_app_user_change', args=[obj.moderator.id])
+            return format_html('<a href="{}">{}</a>', url, obj.moderator.get_full_name())
+        return '-'
+    moderator_link.short_description = 'Moderator'
+
+
+@admin.register(ExamPermission)
+class ExamPermissionAdmin(admin.ModelAdmin):
+    list_display = ['permission_type', 'exam_link', 'school_wide_mark_uploading', 'require_moderation', 'lock_enabled']
+    list_filter = ['permission_type', 'school_wide_mark_uploading', 'require_moderation', 'lock_enabled']
+    raw_id_fields = ['exam', 'created_by']
+    
+    def exam_link(self, obj):
+        if obj.exam:
+            from django.urls import reverse
+            url = reverse('admin:cbe_app_exam_change', args=[obj.exam.id])
+            return format_html('<a href="{}">{}</a>', url, obj.exam.exam_code)
+        return 'Global'
+    exam_link.short_description = 'Exam'
+
+
+@admin.register(ExamResult)
+class ExamResultAdmin(admin.ModelAdmin):
+    list_display = ['exam_link', 'student_link', 'subject', 'marks_obtained', 'percentage', 'grade']
+    list_filter = ['subject', 'grade']
+    search_fields = ['exam__exam_code', 'student__admission_no', 'student__first_name', 'student__last_name', 'subject']
+    raw_id_fields = ['exam', 'student', 'marked_by']
+    readonly_fields = ['percentage', 'marked_at']
+    
+    def exam_link(self, obj):
+        from django.urls import reverse
+        url = reverse('admin:cbe_app_exam_change', args=[obj.exam.id])
+        return format_html('<a href="{}">{}</a>', url, obj.exam.exam_code)
+    exam_link.short_description = 'Exam'
+    
+    def student_link(self, obj):
+        if obj.student:
+            from django.urls import reverse
+            url = reverse('admin:cbe_app_student_change', args=[obj.student.id])
+            return format_html('<a href="{}">{}</a>', url, obj.student.full_name)
+        return '-'
+    student_link.short_description = 'Student'
