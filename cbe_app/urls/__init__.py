@@ -10,6 +10,7 @@ urlpatterns = [
     path('bursar/', include('cbe_app.urls.bursar_urls.bursar_payment_urls')),
     path('bursar/records/', include('cbe_app.urls.bursar_urls.payment_records_urls')),
     path('hr/', include('cbe_app.urls.hr_urls.hr_staff_urls')),
+    path('hr/departments/', include('cbe_app.urls.hr_urls.hr_department_urls')),
     path('student/', include('cbe_app.urls.student_urls.student_dashboard_urls')),
     path('student/fees/', include('cbe_app.urls.student_urls.student_fee_urls')),  
     path('student/profile/', include('cbe_app.urls.student_urls.student_profile_urls')),

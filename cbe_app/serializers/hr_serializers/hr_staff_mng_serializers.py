@@ -1,345 +1,529 @@
-# cbe_app/serializers/hr_serializers/staff_serializers.py
+# cbe_app/serializers/hr_serializers/hr_staff_mng_serializers.py
 
 from rest_framework import serializers
-from cbe_app.models import Staff, User, StaffLeave, StaffLoan, LoanRepayment, PayrollRecord, PayrollPeriod
-from django.contrib.auth.hashers import make_password
-from datetime import date, datetime, timedelta
-import re
-import logging
-
-logger = logging.getLogger(__name__)
+from django.utils import timezone
+from decimal import Decimal
+from cbe_app.models import (
+    Staff, TeacherCategory, JSSDepartment, Department, 
+    DepartmentStaffAssignment, StaffLeave, LeaveBalance, 
+    StaffLoan, LoanRepayment, PayrollComponent, StaffPayrollComponent,
+    PayrollPeriod, PayrollRecord, User, GradeLevel, LearningArea
+)
 
 
 # ==================== STAFF SERIALIZERS ====================
 
-class StaffSerializer(serializers.ModelSerializer):
+class TeacherCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TeacherCategory
+        fields = ['id', 'name', 'code', 'description', 'is_active']
+
+
+class JSSDepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JSSDepartment
+        fields = ['id', 'name', 'code', 'description', 'is_active']
+
+
+class GradeLevelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GradeLevel
+        fields = ['id', 'level', 'name', 'description']
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Department
+        fields = ['id', 'department_code', 'department_name', 'description', 'department_type', 'is_active']
+
+
+class DepartmentStaffAssignmentSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source='department.department_name', read_only=True)
+    department_code = serializers.CharField(source='department.department_code', read_only=True)
+    department_type = serializers.CharField(source='department.department_type', read_only=True)
+    teaching_subjects = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = DepartmentStaffAssignment
+        fields = [
+            'id', 'department', 'department_name', 'department_code', 'department_type',
+            'role', 'teaching_subjects', 'assigned_date', 'end_date', 
+            'is_primary', 'is_active'
+        ]
+    
+    def get_teaching_subjects(self, obj):
+        return [{'id': s.id, 'area_name': s.area_name, 'area_code': s.area_code} 
+                for s in obj.teaching_subjects.all()]
+
+
+class StaffListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for list views"""
     full_name = serializers.SerializerMethodField()
-    age = serializers.SerializerMethodField()
-    reporting_to_name = serializers.SerializerMethodField()
+    teacher_category_code = serializers.CharField(source='teacher_category.code', read_only=True, allow_null=True)
+    teacher_category_name = serializers.CharField(source='teacher_category.name', read_only=True, allow_null=True)
+    primary_department = serializers.SerializerMethodField()
     
     class Meta:
         model = Staff
         fields = [
-            'id', 'staff_id', 'first_name', 'last_name', 'full_name', 'age',
-            'reporting_to', 'reporting_to_name', 'department', 'designation',
-            'personal_email', 'personal_phone', 'status', 'employment_type',
-            'basic_salary', 'employment_date', 'date_of_birth', 'national_id',
-            'gender', 'marital_status', 'bank_name', 'account_number',
-            'kra_pin', 'nssf_no', 'nhif_no', 'emergency_contact',
-            'emergency_contact_name', 'permanent_address', 'contract_end_date',
-            'created_at', 'updated_at'
+            'id', 'staff_id', 'teacher_code', 'first_name', 'middle_name', 'last_name',
+            'full_name', 'designation', 'personal_email', 'personal_phone',
+            'status', 'teacher_category_code', 'teacher_category_name',
+            'primary_department', 'employment_type', 'gender'
         ]
-        read_only_fields = ['id', 'staff_id', 'created_at', 'updated_at']
     
     def get_full_name(self, obj):
         return obj.full_name
     
-    def get_age(self, obj):
-        if obj.date_of_birth:
-            today = date.today()
-            return today.year - obj.date_of_birth.year - ((today.month, today.day) < (obj.date_of_birth.month, obj.date_of_birth.day))
-        return None
-    
-    def get_reporting_to_name(self, obj):
-        if obj.reporting_to:
-            return obj.reporting_to.full_name
+    def get_primary_department(self, obj):
+        primary = obj.department_assignments.filter(is_primary=True, is_active=True).first()
+        if primary:
+            return primary.department.department_name
         return None
 
 
-class StaffCreateSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+class StaffDetailSerializer(serializers.ModelSerializer):
+    """Detailed serializer for single staff view"""
+    full_name = serializers.SerializerMethodField()
+    teacher_category = TeacherCategorySerializer(read_only=True)
+    teacher_category_id = serializers.PrimaryKeyRelatedField(
+        source='teacher_category', queryset=TeacherCategory.objects.filter(is_active=True),
+        write_only=True, required=False, allow_null=True
+    )
+    jss_department = JSSDepartmentSerializer(read_only=True)
+    jss_department_id = serializers.PrimaryKeyRelatedField(
+        source='jss_department', queryset=JSSDepartment.objects.filter(is_active=True),
+        write_only=True, required=False, allow_null=True
+    )
+    assigned_grade_level = GradeLevelSerializer(read_only=True)
+    assigned_grade_level_id = serializers.PrimaryKeyRelatedField(
+        source='assigned_grade_level', queryset=GradeLevel.objects.all(),
+        write_only=True, required=False, allow_null=True
+    )
+    admin_department = DepartmentSerializer(read_only=True)
+    admin_department_id = serializers.PrimaryKeyRelatedField(
+        source='admin_department', queryset=Department.objects.filter(is_active=True),
+        write_only=True, required=False, allow_null=True
+    )
+    department_assignments = DepartmentStaffAssignmentSerializer(many=True, read_only=True)
     
     class Meta:
         model = Staff
-        fields = '__all__'
-        read_only_fields = ['id', 'staff_id', 'created_at', 'updated_at', 'created_by', 'updated_by']
+        fields = [
+            'id', 'staff_id', 'teacher_code', 'user',
+            'first_name', 'middle_name', 'last_name', 'full_name',
+            'date_of_birth', 'gender', 'national_id',
+            'personal_email', 'personal_phone', 'permanent_address',
+            'employment_type', 'employment_date', 'contract_end_date',
+            'designation', 'status',
+            'teacher_category', 'teacher_category_id',
+            'jss_department', 'jss_department_id',
+            'assigned_grade_level', 'assigned_grade_level_id',
+            'admin_department', 'admin_department_id',
+            'highest_qualification', 'specialization',
+            'department_assignments', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'staff_id', 'teacher_code', 'created_at', 'updated_at']
+    
+    def get_full_name(self, obj):
+        return obj.full_name
     
     def validate(self, data):
-        # Check required fields
-        required_fields = ['first_name', 'last_name', 'personal_email', 'personal_phone', 'department', 'designation']
-        for field in required_fields:
-            if not data.get(field):
-                raise serializers.ValidationError({field: f"{field} is required"})
+        """Validate business rules"""
+        teacher_category = data.get('teacher_category')
+        jss_department = data.get('jss_department')
+        assigned_grade_level = data.get('assigned_grade_level')
         
-        # Check if email already exists
-        email = data.get('personal_email')
-        if email:
-            if Staff.objects.filter(personal_email=email).exists():
-                raise serializers.ValidationError({'personal_email': 'Email already exists in staff records'})
-            if User.objects.filter(email=email).exists():
-                raise serializers.ValidationError({'personal_email': 'Email already exists in user accounts'})
+        # JSS teachers must have a JSS department
+        if teacher_category and teacher_category.code == 'JSS' and not jss_department:
+            raise serializers.ValidationError({
+                'jss_department_id': 'JSS teachers must be assigned to a JSS department'
+            })
+        
+        # Non-JSS teachers should not have JSS department
+        if teacher_category and teacher_category.code != 'JSS' and jss_department:
+            raise serializers.ValidationError({
+                'jss_department_id': 'Only JSS teachers can be assigned to JSS departments'
+            })
+        
+        # PP and EP teachers should have grade level assigned
+        if teacher_category and teacher_category.code in ['PP', 'EP'] and not assigned_grade_level:
+            raise serializers.ValidationError({
+                'assigned_grade_level_id': f'{teacher_category.code} teachers must be assigned a grade level'
+            })
+        
+        return data
+
+
+class StaffCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for creating and updating staff"""
+    
+    class Meta:
+        model = Staff
+        fields = [
+            'first_name', 'middle_name', 'last_name', 'date_of_birth', 'gender',
+            'national_id', 'personal_email', 'personal_phone', 'permanent_address',
+            'employment_type', 'employment_date', 'contract_end_date',
+            'designation', 'teacher_category', 'jss_department',
+            'assigned_grade_level', 'admin_department',
+            'highest_qualification', 'specialization'
+        ]
+    
+    def validate_personal_email(self, value):
+        """Check email uniqueness for new staff only"""
+        if self.instance is None and Staff.objects.filter(personal_email=value).exists():
+            raise serializers.ValidationError("Staff with this email already exists")
+        elif self.instance and self.instance.personal_email != value and Staff.objects.filter(personal_email=value).exists():
+            raise serializers.ValidationError("Staff with this email already exists")
+        return value
+    
+    def validate_personal_phone(self, value):
+        """Check phone uniqueness for new staff only"""
+        if self.instance is None and Staff.objects.filter(personal_phone=value).exists():
+            raise serializers.ValidationError("Staff with this phone number already exists")
+        elif self.instance and self.instance.personal_phone != value and Staff.objects.filter(personal_phone=value).exists():
+            raise serializers.ValidationError("Staff with this phone number already exists")
+        return value
+    
+    def validate_national_id(self, value):
+        """Check national ID uniqueness for new staff only"""
+        if self.instance is None and Staff.objects.filter(national_id=value).exists():
+            raise serializers.ValidationError("Staff with this National ID already exists")
+        elif self.instance and self.instance.national_id != value and Staff.objects.filter(national_id=value).exists():
+            raise serializers.ValidationError("Staff with this National ID already exists")
+        return value
+
+
+# ==================== DEPARTMENT ASSIGNMENT SERIALIZERS ====================
+
+class DepartmentAssignmentSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    department_name = serializers.CharField(source='department.department_name', read_only=True)
+    teaching_subject_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        required=False,
+        queryset=LearningArea.objects.filter(is_active=True),
+        write_only=True
+    )
+    teaching_subjects = serializers.SerializerMethodField(read_only=True)
+    
+    class Meta:
+        model = DepartmentStaffAssignment
+        fields = [
+            'id', 'staff', 'staff_name', 'department', 'department_name',
+            'role', 'teaching_subjects', 'teaching_subject_ids',
+            'assigned_date', 'end_date', 'is_primary', 'is_active'
+        ]
+        read_only_fields = ['id', 'assigned_date']
+    
+    def get_teaching_subjects(self, obj):
+        return [{'id': s.id, 'area_name': s.area_name, 'area_code': s.area_code} 
+                for s in obj.teaching_subjects.all()]
+    
+    def validate(self, data):
+        """Ensure only one primary department per staff"""
+        staff = data.get('staff')
+        is_primary = data.get('is_primary', False)
+        
+        if staff and is_primary:
+            existing_primary = DepartmentStaffAssignment.objects.filter(
+                staff=staff, is_primary=True, is_active=True
+            ).exclude(id=getattr(self.instance, 'id', None))
+            
+            if existing_primary.exists():
+                raise serializers.ValidationError({
+                    'is_primary': 'Staff already has a primary department. Set existing primary to false first.'
+                })
         
         return data
     
     def create(self, validated_data):
-        # Extract user-related fields
-        username = validated_data.pop('username', None)
-        password = validated_data.pop('password', None)
-        
-        # Generate username if not provided
-        if not username:
-            base_username = f"{validated_data['first_name'].lower()}.{validated_data['last_name'].lower()}"
-            username = base_username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{base_username}{counter}"
-                counter += 1
-        
-        # Generate password if not provided
-        if not password:
-            password = f"Staff@{validated_data['first_name'][0]}{validated_data['last_name'][0]}123"
-        
-        # Create user account
-        user = User.objects.create(
-            username=username,
-            first_name=validated_data['first_name'],
-            last_name=validated_data['last_name'],
-            email=validated_data.get('personal_email'),
-            phone=validated_data.get('personal_phone'),
-            role='teacher' if validated_data.get('department') == 'Teaching' else 'staff'
-        )
-        user.set_password(password)
-        user.save()
-        
-        # Generate staff_id
-        year = date.today().year
-        count = Staff.objects.filter(employment_date__year=year).count() + 1
-        validated_data['staff_id'] = f"STF/{year}/{count:04d}"
-        
-        # Set default employment date if not provided
-        if not validated_data.get('employment_date'):
-            validated_data['employment_date'] = date.today()
-        
-        # Set default status if not provided
-        if not validated_data.get('status'):
-            validated_data['status'] = 'Active'
-        
-        # Create staff
-        validated_data['user'] = user
-        staff = Staff.objects.create(**validated_data)
-        
-        return staff
+        teaching_subject_ids = validated_data.pop('teaching_subject_ids', [])
+        assignment = DepartmentStaffAssignment.objects.create(**validated_data)
+        if teaching_subject_ids:
+            assignment.teaching_subjects.set(teaching_subject_ids)
+        return assignment
     
     def update(self, instance, validated_data):
-        # Handle user update
-        if 'personal_email' in validated_data and instance.user:
-            instance.user.email = validated_data['personal_email']
-            instance.user.save()
-        
-        if 'personal_phone' in validated_data and instance.user:
-            instance.user.phone = validated_data['personal_phone']
-            instance.user.save()
-        
-        # Update staff instance
+        teaching_subject_ids = validated_data.pop('teaching_subject_ids', None)
         for attr, value in validated_data.items():
-            if attr not in ['username', 'password']:
-                setattr(instance, attr, value)
-        
+            setattr(instance, attr, value)
         instance.save()
+        if teaching_subject_ids is not None:
+            instance.teaching_subjects.set(teaching_subject_ids)
         return instance
 
 
-class StaffListSerializer(serializers.ModelSerializer):
+# ==================== UNASSIGNED STAFF SERIALIZER ====================
+
+class UnassignedStaffSerializer(serializers.ModelSerializer):
+    """Serializer for staff without department assignments"""
     full_name = serializers.SerializerMethodField()
+    teacher_category_code = serializers.CharField(source='teacher_category.code', read_only=True, allow_null=True)
+    teacher_category_name = serializers.CharField(source='teacher_category.name', read_only=True, allow_null=True)
     
     class Meta:
         model = Staff
-        fields = ['id', 'staff_id', 'first_name', 'last_name', 'full_name', 'department', 
-                  'designation', 'personal_email', 'personal_phone', 'status', 
-                  'employment_type', 'basic_salary', 'employment_date']
+        fields = [
+            'id', 'staff_id', 'teacher_code', 'first_name', 'last_name', 'full_name',
+            'designation', 'personal_email', 'personal_phone', 'status',
+            'teacher_category_code', 'teacher_category_name'
+        ]
     
     def get_full_name(self, obj):
         return obj.full_name
 
 
-# ==================== LEAVE SERIALIZERS ====================
+# ==================== LEAVE MANAGEMENT SERIALIZERS ====================
 
 class StaffLeaveSerializer(serializers.ModelSerializer):
-    staff_name = serializers.SerializerMethodField()
-    staff_id = serializers.SerializerMethodField()
-    total_days = serializers.SerializerMethodField()
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    staff_id = serializers.CharField(source='staff.staff_id', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
+    handover_to_name = serializers.CharField(source='handover_to.full_name', read_only=True, allow_null=True)
     
     class Meta:
         model = StaffLeave
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at', 'applied_date', 'status']
-    
-    def get_staff_name(self, obj):
-        return obj.staff.full_name
-    
-    def get_staff_id(self, obj):
-        return obj.staff.staff_id
-    
-    def get_total_days(self, obj):
-        return obj.total_days
-    
-    def validate(self, data):
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
-        
-        if start_date and end_date:
-            if start_date > end_date:
-                raise serializers.ValidationError("Start date cannot be after end date")
-            
-            # Check for overlapping leave requests
-            existing_leaves = StaffLeave.objects.filter(
-                staff=data.get('staff'),
-                status__in=['Pending', 'Approved'],
-                start_date__lte=end_date,
-                end_date__gte=start_date
-            )
-            if self.instance:
-                existing_leaves = existing_leaves.exclude(id=self.instance.id)
-            
-            if existing_leaves.exists():
-                raise serializers.ValidationError("You have an overlapping leave request")
-        
-        return data
+        fields = [
+            'id', 'staff', 'staff_name', 'staff_id', 'leave_type',
+            'start_date', 'end_date', 'total_days', 'reason',
+            'contact_during_leave', 'status', 'applied_date',
+            'approved_by', 'approved_by_name', 'approved_date',
+            'rejection_reason', 'handover_notes', 'handover_to', 'handover_to_name'
+        ]
+        read_only_fields = ['id', 'total_days', 'applied_date', 'status']
 
 
-class StaffLeaveCreateSerializer(serializers.ModelSerializer):
+class LeaveBalanceSerializer(serializers.ModelSerializer):
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    
     class Meta:
-        model = StaffLeave
-        fields = ['leave_type', 'start_date', 'end_date', 'reason', 'contact_during_leave']
-    
-    def create(self, validated_data):
-        validated_data['staff'] = self.context['staff']
-        validated_data['status'] = 'Pending'
-        validated_data['applied_date'] = date.today()
-        return super().create(validated_data)
+        model = LeaveBalance
+        fields = [
+            'id', 'staff', 'staff_name', 'leave_year', 'leave_type',
+            'total_entitled', 'taken_so_far', 'balance', 'carried_over', 'expires_on'
+        ]
+        read_only_fields = ['id', 'balance']
 
 
-# ==================== LOAN SERIALIZERS ====================
-
-class LoanRepaymentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LoanRepayment
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at']
-
+# ==================== LOAN MANAGEMENT SERIALIZERS ====================
 
 class StaffLoanSerializer(serializers.ModelSerializer):
-    staff_name = serializers.SerializerMethodField()
-    staff_id = serializers.SerializerMethodField()
-    monthly_installment = serializers.SerializerMethodField()
-    outstanding_balance = serializers.SerializerMethodField()
-    repayments = LoanRepaymentSerializer(many=True, read_only=True)
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    staff_id = serializers.CharField(source='staff.staff_id', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True, allow_null=True)
+    monthly_installment_display = serializers.DecimalField(
+        source='monthly_installment', max_digits=12, decimal_places=2, read_only=True
+    )
     
     class Meta:
         model = StaffLoan
-        fields = '__all__'
-        read_only_fields = ['id', 'loan_id', 'created_at', 'updated_at', 'status', 
-                           'total_paid', 'total_interest_paid', 'total_principal_paid',
-                           'outstanding_balance', 'overdue_amount', 'overdue_days']
-    
-    def get_staff_name(self, obj):
-        return obj.staff.full_name
-    
-    def get_staff_id(self, obj):
-        return obj.staff.staff_id
-    
-    def get_monthly_installment(self, obj):
-        return float(obj.monthly_installment) if obj.monthly_installment else 0
-    
-    def get_outstanding_balance(self, obj):
-        return float(obj.outstanding_balance) if obj.outstanding_balance else obj.loan_amount
-    
-    def validate(self, data):
-        loan_amount = data.get('loan_amount', 0)
-        repayment_months = data.get('repayment_months', 1)
-        
-        if loan_amount <= 0:
-            raise serializers.ValidationError("Loan amount must be greater than 0")
-        
-        if repayment_months <= 0:
-            raise serializers.ValidationError("Repayment months must be greater than 0")
-        
-        # Check if staff already has active loan
-        staff = data.get('staff')
-        if staff and StaffLoan.objects.filter(staff=staff, status__in=['Approved', 'Active', 'Disbursed']).exists():
-            raise serializers.ValidationError("Staff already has an active loan")
-        
-        return data
+        fields = [
+            'id', 'loan_id', 'staff', 'staff_name', 'staff_id',
+            'loan_type', 'loan_amount', 'interest_rate', 'interest_type',
+            'repayment_months', 'reason', 'monthly_installment', 'monthly_installment_display',
+            'start_date', 'end_date', 'status', 'approved_amount', 'disbursed_amount',
+            'disbursement_date', 'disbursement_method', 'total_paid',
+            'total_interest_paid', 'total_principal_paid', 'outstanding_balance',
+            'overdue_amount', 'overdue_days', 'applied_date', 'approved_by',
+            'approved_by_name', 'approved_date', 'rejection_reason',
+            'guarantor_name', 'guarantor_contact', 'security_details'
+        ]
+        read_only_fields = ['id', 'loan_id', 'total_paid', 'total_interest_paid', 
+                           'total_principal_paid', 'outstanding_balance', 'applied_date']
 
 
-
-class StaffLoanCreateSerializer(serializers.ModelSerializer):
+class LoanRepaymentSerializer(serializers.ModelSerializer):
+    loan_info = StaffLoanSerializer(source='loan', read_only=True)
+    processed_by_name = serializers.CharField(source='processed_by.username', read_only=True, allow_null=True)
+    
     class Meta:
-        model = StaffLoan
-        fields = ['loan_type', 'loan_amount', 'interest_rate', 'repayment_months', 
-                'guarantor_name', 'guarantor_contact']
-    
-    def validate_loan_amount(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Loan amount must be greater than 0")
-        return value
-    
-    def validate_repayment_months(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Repayment months must be greater than 0")
-        return value
-    
-    def create(self, validated_data):
-        from datetime import date
-        import uuid
-        
-        validated_data['staff'] = self.context['staff']
-        validated_data['status'] = 'Pending'
-        validated_data['applied_date'] = date.today()
-        validated_data['loan_id'] = f"LN-{date.today().strftime('%Y%m')}-{uuid.uuid4().hex[:6].upper()}"
-        
-        # Calculate monthly installment
-        loan_amount = validated_data.get('loan_amount', 0)
-        repayment_months = validated_data.get('repayment_months', 1)
-        interest_rate = validated_data.get('interest_rate', 0)
-        
-        if interest_rate and interest_rate > 0:
-            total_interest = float(loan_amount) * (float(interest_rate) / 100) * (float(repayment_months) / 12)
-            total_repayment = float(loan_amount) + total_interest
-            validated_data['monthly_installment'] = total_repayment / repayment_months
-        else:
-            validated_data['monthly_installment'] = float(loan_amount) / repayment_months
-        
-        validated_data['outstanding_balance'] = loan_amount
-        
-        return super().create(validated_data)
+        model = LoanRepayment
+        fields = [
+            'id', 'loan', 'loan_info', 'repayment_date', 'amount_paid',
+            'principal_amount', 'interest_amount', 'payment_method',
+            'payment_reference', 'is_overdue', 'overdue_days',
+            'processed_by', 'processed_by_name', 'processed_date', 'remarks'
+        ]
+        read_only_fields = ['id', 'processed_date']
+
 
 # ==================== PAYROLL SERIALIZERS ====================
+
+class PayrollComponentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PayrollComponent
+        fields = [
+            'id', 'component_code', 'component_name', 'component_type',
+            'calculation_type', 'fixed_amount', 'percentage_rate',
+            'is_taxable', 'is_pensionable', 'frequency', 'is_active'
+        ]
+
+
+class StaffPayrollComponentSerializer(serializers.ModelSerializer):
+    component_details = PayrollComponentSerializer(source='component', read_only=True)
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    
+    class Meta:
+        model = StaffPayrollComponent
+        fields = [
+            'id', 'staff', 'staff_name', 'component', 'component_details',
+            'custom_amount', 'custom_percentage', 'effective_from',
+            'effective_to', 'is_active', 'approved_by', 'approved_date'
+        ]
+
 
 class PayrollPeriodSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollPeriod
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = [
+            'id', 'period_code', 'period_name', 'start_date', 'end_date',
+            'pay_date', 'status', 'total_staff', 'processed_staff',
+            'total_gross', 'total_deductions', 'total_net',
+            'total_paye', 'total_nssf', 'total_nhif', 'is_locked'
+        ]
+        read_only_fields = ['period_code']
 
 
 class PayrollRecordSerializer(serializers.ModelSerializer):
-    staff_name = serializers.SerializerMethodField()
-    staff_id = serializers.SerializerMethodField()
-    period_name = serializers.SerializerMethodField()
+    staff_name = serializers.CharField(source='staff.full_name', read_only=True)
+    staff_id = serializers.CharField(source='staff.staff_id', read_only=True)
+    payroll_period_name = serializers.CharField(source='payroll_period.period_name', read_only=True)
     
     class Meta:
         model = PayrollRecord
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at', 'gross_salary', 'total_deductions', 'net_salary']
-    
-    def get_staff_name(self, obj):
-        return obj.staff.full_name
-    
-    def get_staff_id(self, obj):
-        return obj.staff.staff_id
-    
-    def get_period_name(self, obj):
-        return obj.payroll_period.period_name if obj.payroll_period else None
+        fields = [
+            'id', 'payroll_period', 'payroll_period_name', 'staff', 'staff_name', 'staff_id',
+            'basic_salary', 'allowances_total', 'overtime_total', 'bonus_total',
+            'other_earnings', 'gross_salary', 'paye_tax', 'nssf_deduction',
+            'nhif_deduction', 'pension_deduction', 'loan_deductions',
+            'other_deductions', 'total_deductions', 'net_salary',
+            'payment_status', 'payment_method', 'payment_reference',
+            'payment_date', 'days_worked', 'days_absent', 'leave_days',
+            'overtime_hours', 'is_calculated', 'is_approved', 'is_paid'
+        ]
+        read_only_fields = ['gross_salary', 'total_deductions', 'net_salary']
 
 
-# ==================== LEAVE BALANCE SERIALIZER ====================
+# ==================== STATS SERIALIZER ====================
 
-class LeaveBalanceSerializer(serializers.Serializer):
-    annual = serializers.IntegerField()
-    sick = serializers.IntegerField()
-    maternity = serializers.IntegerField()
-    paternity = serializers.IntegerField()
-    study = serializers.IntegerField()
-    compassionate = serializers.IntegerField()
+class StaffStatsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    active = serializers.IntegerField()
+    onLeave = serializers.IntegerField()
+    jss = serializers.IntegerField()
+    primary = serializers.IntegerField()
+    earlyYears = serializers.IntegerField()
+    stem = serializers.IntegerField()
+    humanities = serializers.IntegerField()
+    languages = serializers.IntegerField()
+    technical = serializers.IntegerField()
+
+
+# ==================== BULK OPERATIONS SERIALIZER ====================
+
+class BulkStaffCreateSerializer(serializers.Serializer):
+    staff_members = StaffCreateUpdateSerializer(many=True)
+    
+    def validate(self, data):
+        """Validate all staff members before bulk create"""
+        staff_members = data.get('staff_members', [])
+        emails = []
+        phones = []
+        national_ids = []
+        
+        for idx, staff in enumerate(staff_members):
+            email = staff.get('personal_email')
+            phone = staff.get('personal_phone')
+            national_id = staff.get('national_id')
+            
+            if email:
+                if email in emails:
+                    raise serializers.ValidationError(f"Duplicate email at row {idx + 1}: {email}")
+                emails.append(email)
+            
+            if phone:
+                if phone in phones:
+                    raise serializers.ValidationError(f"Duplicate phone at row {idx + 1}: {phone}")
+                phones.append(phone)
+            
+            if national_id:
+                if national_id in national_ids:
+                    raise serializers.ValidationError(f"Duplicate National ID at row {idx + 1}: {national_id}")
+                national_ids.append(national_id)
+        
+        return data
+
+
+# ==================== DEPARTMENT MANAGEMENT SERIALIZERS ====================
+
+class DepartmentListSerializer(serializers.ModelSerializer):
+    staff_count = serializers.SerializerMethodField()
+    staff_assignments = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Department
+        fields = ['id', 'department_code', 'department_name', 'department_type', 'description', 'is_active', 'staff_count', 'staff_assignments']
+    
+    def get_staff_count(self, obj):
+        return obj.staff_assignments.filter(is_active=True).count()
+    
+    def get_staff_assignments(self, obj):
+        assignments = obj.staff_assignments.filter(is_active=True).select_related('staff')
+        data = []
+        for a in assignments:
+            data.append({
+                'id': str(a.id),
+                'staff_id': str(a.staff.id),
+                'first_name': a.staff.first_name,
+                'last_name': a.staff.last_name,
+                'full_name': f"{a.staff.first_name} {a.staff.last_name}",
+                'designation': a.staff.designation,
+                'teacher_code': a.staff.teacher_code,
+                'role': a.role,
+                'is_primary': a.is_primary,
+                'teaching_subjects': []
+            })
+        return data
+        
+
+
+class DepartmentDetailSerializer(serializers.ModelSerializer):
+    """Detailed serializer for single department view"""
+    staff_assignments = DepartmentStaffAssignmentSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Department
+        fields = [
+            'id', 'department_code', 'department_name', 'department_type',
+            'description', 'is_active', 'staff_assignments', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DepartmentCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for creating and updating departments"""
+    
+    class Meta:
+        model = Department
+        fields = [
+            'department_code', 'department_name', 'department_type',
+            'description', 'is_active'
+        ]
+    
+    def validate_department_code(self, value):
+        """Check code uniqueness for new departments only"""
+        value = value.upper()
+        if self.instance is None and Department.objects.filter(department_code=value).exists():
+            raise serializers.ValidationError("Department with this code already exists")
+        elif self.instance and self.instance.department_code != value and Department.objects.filter(department_code=value).exists():
+            raise serializers.ValidationError("Department with this code already exists")
+        return value
+    
+    def validate_department_name(self, value):
+        """Check name uniqueness for new departments only"""
+        if self.instance is None and Department.objects.filter(department_name=value).exists():
+            raise serializers.ValidationError("Department with this name already exists")
+        elif self.instance and self.instance.department_name != value and Department.objects.filter(department_name=value).exists():
+            raise serializers.ValidationError("Department with this name already exists")
+        return value

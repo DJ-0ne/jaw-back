@@ -1,101 +1,101 @@
 # cbe_app/views/hr_views/hr_staff_mng_views.py
 
-from django.http import HttpResponse
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework import status
-from django.db import transaction
-from django.db.models import Q, Sum, Count
-from datetime import datetime, date, timedelta
-import logging
-import pandas as pd
+import csv
 import io
+import openpyxl
+from datetime import datetime, timezone
+from django.db import models
+from django.db.models import Q, Count, Sum, Case, When, IntegerField, Value
+from django.db.models.functions import Coalesce
+from django.http import HttpResponse
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth import get_user_model
 
-from cbe_app.models import Staff, User, StaffLeave, StaffLoan, LoanRepayment, PayrollRecord, PayrollPeriod
+from cbe_app.models import (
+    GradeLevel, Staff, TeacherCategory, JSSDepartment, Department, 
+    DepartmentStaffAssignment, StaffLeave, LeaveBalance, 
+    StaffLoan, LoanRepayment, PayrollRecord, LearningArea
+)
 from cbe_app.serializers.hr_serializers.hr_staff_mng_serializers import (
-    StaffSerializer, StaffCreateSerializer, StaffListSerializer,
-    StaffLeaveSerializer, StaffLeaveCreateSerializer,
-    StaffLoanSerializer, StaffLoanCreateSerializer,
-    PayrollRecordSerializer, LeaveBalanceSerializer
+    StaffListSerializer, StaffDetailSerializer, StaffCreateUpdateSerializer,
+    TeacherCategorySerializer, JSSDepartmentSerializer, GradeLevelSerializer,
+    DepartmentSerializer, DepartmentAssignmentSerializer,
+    StaffLeaveSerializer, LeaveBalanceSerializer, StaffLoanSerializer,
+    LoanRepaymentSerializer, PayrollPeriodSerializer, PayrollRecordSerializer,
+    StaffStatsSerializer, BulkStaffCreateSerializer
 )
 
-logger = logging.getLogger(__name__)
+User = get_user_model()
 
 
-def generate_staff_id():
-    """Generate unique staff ID"""
-    year = date.today().year
-    count = Staff.objects.filter(employment_date__year=year).count() + 1
-    return f"STF/{year}/{count:04d}"
-
-
-def parse_date(date_value):
-    """Parse date from various formats"""
-    if not date_value or pd.isna(date_value):
-        return None
-    
-    try:
-        if isinstance(date_value, datetime):
-            return date_value.date()
-        elif isinstance(date_value, date):
-            return date_value
-        elif isinstance(date_value, str):
-            for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']:
-                try:
-                    return datetime.strptime(date_value, fmt).date()
-                except:
-                    continue
-        return None
-    except:
-        return None
-
-
-# ==================== STAFF CRUD VIEWS ====================
+# ==================== STAFF CRUD OPERATIONS ====================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_staff_list(request):
-    """Get all staff members with filters"""
+    """
+    Get paginated list of staff with filtering options
+    Query params: search, category, department, status, page, page_size
+    """
     try:
-        department = request.query_params.get('department')
-        role = request.query_params.get('role')
-        status_filter = request.query_params.get('status')
-        employment_type = request.query_params.get('employment_type')
-        search = request.query_params.get('search')
+        queryset = Staff.objects.select_related('teacher_category').prefetch_related('department_assignments')
         
-        queryset = Staff.objects.filter(archived=False).select_related('user', 'reporting_to').order_by('-created_at')
-        
-        if department and department != '':
-            queryset = queryset.filter(department__iexact=department)
-        
-        if role and role != '':
-            queryset = queryset.filter(designation__iexact=role)
-        
-        if status_filter and status_filter != '':
-            queryset = queryset.filter(status__iexact=status_filter)
-        
-        if employment_type and employment_type != '':
-            queryset = queryset.filter(employment_type__iexact=employment_type)
-        
-        if search and search.strip() != '':
+        # Search filter
+        search = request.query_params.get('search', '')
+        if search:
             queryset = queryset.filter(
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search) |
+                Q(middle_name__icontains=search) |
                 Q(staff_id__icontains=search) |
+                Q(teacher_code__icontains=search) |
                 Q(personal_email__icontains=search) |
-                Q(department__icontains=search) |
-                Q(designation__icontains=search)
+                Q(personal_phone__icontains=search)
             )
         
-        serializer = StaffListSerializer(queryset, many=True)
+        # Category filter
+        category = request.query_params.get('category', '')
+        if category and category != 'all':
+            queryset = queryset.filter(teacher_category__code=category)
+        
+        # Department filter
+        department = request.query_params.get('department', '')
+        if department and department != 'all':
+            queryset = queryset.filter(
+                department_assignments__department_id=department,
+                department_assignments__is_active=True
+            ).distinct()
+        
+        # Status filter
+        status_filter = request.query_params.get('status', '')
+        if status_filter and status_filter != 'all':
+            queryset = queryset.filter(status=status_filter)
+        
+        # Pagination
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+        start = (page - 1) * page_size
+        end = start + page_size
+        
+        total = queryset.count()
+        staff_list = queryset.order_by('-created_at')[start:end]
+        
+        serializer = StaffListSerializer(staff_list, many=True)
         
         return Response({
             'success': True,
             'data': serializer.data,
-            'count': len(serializer.data)
+            'pagination': {
+                'total': total,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': (total + page_size - 1) // page_size
+            }
         }, status=status.HTTP_200_OK)
-    
+        
     except Exception as e:
         return Response({
             'success': False,
@@ -106,22 +106,26 @@ def get_staff_list(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_staff_detail(request, staff_id):
-    """Get staff member details"""
+    """Get detailed information for a specific staff member"""
     try:
-        staff = Staff.objects.select_related('user', 'reporting_to').get(id=staff_id, archived=False)
-        serializer = StaffSerializer(staff)
+        staff = Staff.objects.select_related(
+            'teacher_category', 'jss_department', 'assigned_grade_level', 'admin_department'
+        ).prefetch_related(
+            'department_assignments__department',
+            'department_assignments__teaching_subjects'
+        ).get(id=staff_id)
         
+        serializer = StaffDetailSerializer(staff)
         return Response({
             'success': True,
             'data': serializer.data
         }, status=status.HTTP_200_OK)
-    
+        
     except Staff.DoesNotExist:
         return Response({
             'success': False,
             'error': 'Staff member not found'
         }, status=status.HTTP_404_NOT_FOUND)
-    
     except Exception as e:
         return Response({
             'success': False,
@@ -134,43 +138,27 @@ def get_staff_detail(request, staff_id):
 def create_staff(request):
     """Create a new staff member"""
     try:
-        # Map frontend field names
-        data = request.data.copy()
+        serializer = StaffCreateUpdateSerializer(data=request.data)
         
-        if 'email' in data and 'personal_email' not in data:
-            data['personal_email'] = data.pop('email')
-        
-        if 'phone' in data and 'personal_phone' not in data:
-            data['personal_phone'] = data.pop('phone')
-        
-        # Set employment_date if not provided
-        if 'employment_date' not in data or not data['employment_date']:
-            data['employment_date'] = date.today().isoformat()
-        
-        if request.user.role not in ['hr_manager', 'system_admin', 'admin']:
+        if not serializer.is_valid():
             return Response({
                 'success': False,
-                'error': 'You do not have permission to create staff members'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        serializer = StaffCreateSerializer(data=data)
-        
-        if serializer.is_valid():
-            with transaction.atomic():
-                staff = serializer.save(created_by=request.user)
-                response_serializer = StaffSerializer(staff)
-                
-                return Response({
-                    'success': True,
-                    'data': response_serializer.data,
-                    'message': f'Staff member {staff.full_name} created successfully'
-                }, status=status.HTTP_201_CREATED)
-        else:
-            return Response({
-                'success': False,
-                'errors': serializer.errors
+                'error': serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
-    
+        
+        staff = Staff.objects.create(
+            **serializer.validated_data,
+            created_by=request.user,
+            status='Active'
+        )
+        
+        detail_serializer = StaffDetailSerializer(staff)
+        return Response({
+            'success': True,
+            'data': detail_serializer.data,
+            'message': f'Staff {staff.full_name} created successfully'
+        }, status=status.HTTP_201_CREATED)
+        
     except Exception as e:
         return Response({
             'success': False,
@@ -178,51 +166,39 @@ def create_staff(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['PUT', 'PATCH'])
+@api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def update_staff(request, staff_id):
-    """Update staff member"""
+    """Update an existing staff member"""
     try:
-        data = request.data.copy()
+        staff = Staff.objects.get(id=staff_id)
         
-        if 'email' in data and 'personal_email' not in data:
-            data['personal_email'] = data.pop('email')
+        serializer = StaffCreateUpdateSerializer(staff, data=request.data, partial=True)
         
-        if 'phone' in data and 'personal_phone' not in data:
-            data['personal_phone'] = data.pop('phone')
-        
-        if request.user.role not in ['hr_manager', 'system_admin', 'admin']:
+        if not serializer.is_valid():
             return Response({
                 'success': False,
-                'error': 'You do not have permission to update staff members'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        try:
-            staff = Staff.objects.select_related('user').get(id=staff_id, archived=False)
-        except Staff.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Staff member not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        serializer = StaffCreateSerializer(staff, data=data, partial=(request.method == 'PATCH'))
-        
-        if serializer.is_valid():
-            with transaction.atomic():
-                updated_staff = serializer.save(updated_by=request.user)
-                response_serializer = StaffSerializer(updated_staff)
-                
-                return Response({
-                    'success': True,
-                    'data': response_serializer.data,
-                    'message': f'Staff member {updated_staff.full_name} updated successfully'
-                }, status=status.HTTP_200_OK)
-        else:
-            return Response({
-                'success': False,
-                'errors': serializer.errors
+                'error': serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
-    
+        
+        for attr, value in serializer.validated_data.items():
+            setattr(staff, attr, value)
+        
+        staff.updated_by = request.user
+        staff.save()
+        
+        detail_serializer = StaffDetailSerializer(staff)
+        return Response({
+            'success': True,
+            'data': detail_serializer.data,
+            'message': f'Staff {staff.full_name} updated successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except Staff.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Staff member not found'
+        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
             'success': False,
@@ -233,37 +209,23 @@ def update_staff(request, staff_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_staff(request, staff_id):
-    """Delete staff member (soft delete)"""
+    """Delete a staff member (soft delete by setting status to Terminated)"""
     try:
-        if request.user.role not in ['hr_manager', 'system_admin', 'admin']:
-            return Response({
-                'success': False,
-                'error': 'You do not have permission to delete staff members'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        try:
-            staff = Staff.objects.get(id=staff_id, archived=False)
-        except Staff.DoesNotExist:
-            return Response({
-                'success': False,
-                'error': 'Staff member not found'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        with transaction.atomic():
-            staff.archived = True
-            staff.status = 'Terminated'
-            staff.status_date = date.today()
-            staff.save()
-            
-            if staff.user:
-                staff.user.is_active = False
-                staff.user.save()
+        staff = Staff.objects.get(id=staff_id)
+        staff.status = 'Terminated'
+        staff.updated_by = request.user
+        staff.save()
         
         return Response({
             'success': True,
-            'message': f'Staff member {staff.full_name} has been archived'
+            'message': f'Staff {staff.full_name} has been terminated'
         }, status=status.HTTP_200_OK)
-    
+        
+    except Staff.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Staff member not found'
+        }, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({
             'success': False,
@@ -271,159 +233,229 @@ def delete_staff(request, staff_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# ==================== STAFF STATISTICS VIEWS ====================
+# ==================== DEPARTMENT ASSIGNMENT OPERATIONS ====================
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def assign_department(request, staff_id):
+    """Assign a staff member to a department"""
+    try:
+        from django.utils import timezone as tz
+        from datetime import date
+        
+        staff = Staff.objects.get(id=staff_id)
+        
+        data = request.data
+        department_id = data.get('department_id')
+        
+        if not department_id:
+            return Response({
+                'success': False,
+                'error': 'department_id is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            department = Department.objects.get(id=department_id)
+        except Department.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Department not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get today's date
+        today = tz.now().date()
+        
+        # Check if assignment already exists
+        assignment, created = DepartmentStaffAssignment.objects.get_or_create(
+            staff=staff,
+            department=department,
+            defaults={
+                'role': data.get('role', 'member'),
+                'assigned_date': today,
+                'is_primary': data.get('is_primary', True),
+                'is_active': True
+            }
+        )
+        
+        if not created:
+            # Update existing assignment
+            assignment.role = data.get('role', assignment.role)
+            assignment.is_primary = data.get('is_primary', assignment.is_primary)
+            assignment.is_active = True
+            assignment.save()
+        
+        # If this is primary, remove primary flag from other assignments
+        if assignment.is_primary:
+            DepartmentStaffAssignment.objects.filter(
+                staff=staff, is_primary=True
+            ).exclude(id=assignment.id).update(is_primary=False)
+        
+        # Handle teaching subjects for academic departments
+        teaching_subject_ids = data.get('teaching_subjects', [])
+        if teaching_subject_ids:
+            subjects = LearningArea.objects.filter(id__in=teaching_subject_ids)
+            assignment.teaching_subjects.set(subjects)
+        
+        serializer = DepartmentAssignmentSerializer(assignment)
+        return Response({
+            'success': True,
+            'data': serializer.data,
+            'message': f'Staff assigned to {department.department_name} successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except Staff.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Staff member not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        print("Error in assign_department:", str(e))
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_staff_assignments(request, staff_id):
+    """Get all department assignments for a staff member"""
+    try:
+        staff = Staff.objects.get(id=staff_id)
+        assignments = staff.department_assignments.filter(is_active=True).select_related('department')
+        
+        serializer = DepartmentAssignmentSerializer(assignments, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except Staff.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Staff member not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def remove_assignment(request, assignment_id):
+    """Remove a department assignment (soft delete)"""
+    try:
+        assignment = DepartmentStaffAssignment.objects.get(id=assignment_id)
+        assignment.is_active = False
+        assignment.save()
+        
+        return Response({
+            'success': True,
+            'message': 'Department assignment removed successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except DepartmentStaffAssignment.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Assignment not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def set_primary_assignment(request, assignment_id):
+    """Set a department assignment as primary"""
+    try:
+        assignment = DepartmentStaffAssignment.objects.get(id=assignment_id)
+        
+        # Remove primary from all other assignments of this staff
+        DepartmentStaffAssignment.objects.filter(
+            staff=assignment.staff, is_primary=True
+        ).update(is_primary=False)
+        
+        # Set this as primary
+        assignment.is_primary = True
+        assignment.save()
+        
+        serializer = DepartmentAssignmentSerializer(assignment)
+        return Response({
+            'success': True,
+            'data': serializer.data,
+            'message': 'Primary department updated successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except DepartmentStaffAssignment.DoesNotExist:
+        return Response({
+            'success': False,
+            'error': 'Assignment not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ==================== STAFF STATISTICS ====================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_staff_stats(request):
-    """Get staff statistics"""
+    """Get aggregated staff statistics"""
     try:
-        total_staff = Staff.objects.filter(archived=False).count()
-        active_staff = Staff.objects.filter(status='Active', archived=False).count()
-        teachers = Staff.objects.filter(department='Teaching', archived=False).count()
-        admin = Staff.objects.filter(department='Administration', archived=False).count()
-        total_salary = Staff.objects.filter(archived=False, basic_salary__isnull=False).aggregate(total=Sum('basic_salary'))['total'] or 0
+        total_staff = Staff.objects.count()
+        active_staff = Staff.objects.filter(status='Active').count()
+        on_leave_staff = Staff.objects.filter(status='On Leave').count()
         
-        return Response({
-            'success': True,
-            'data': {
-                'total_staff': total_staff,
-                'active_staff': active_staff,
-                'teachers': teachers,
-                'admin_staff': admin,
-                'total_monthly_salary': float(total_salary)
-            }
-        }, status=status.HTTP_200_OK)
-    
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ==================== LEAVE MANAGEMENT VIEWS ====================
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_staff_leaves(request, staff_id):
-    """Get all leave requests for a staff member"""
-    try:
-        staff = Staff.objects.get(id=staff_id)
-        leaves = StaffLeave.objects.filter(staff=staff).order_by('-applied_date')
-        serializer = StaffLeaveSerializer(leaves, many=True)
+        # By teacher category
+        jss_staff = Staff.objects.filter(teacher_category__code='JSS').count()
+        primary_staff = Staff.objects.filter(teacher_category__code='EP').count()
+        early_years_staff = Staff.objects.filter(teacher_category__code='PP').count()
         
-        return Response({
-            'success': True,
-            'data': serializer.data
-        }, status=status.HTTP_200_OK)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def create_staff_leave(request, staff_id):
-    """Create a leave request for a staff member"""
-    try:
-        staff = Staff.objects.get(id=staff_id)
+        # By department (for JSS departments)
+        stem_count = Staff.objects.filter(
+            department_assignments__department__department_name__icontains='STEM',
+            department_assignments__is_active=True
+        ).distinct().count()
         
-        serializer = StaffLeaveCreateSerializer(data=request.data, context={'staff': staff})
+        humanities_count = Staff.objects.filter(
+            department_assignments__department__department_name__icontains='Humanities',
+            department_assignments__is_active=True
+        ).distinct().count()
         
-        if serializer.is_valid():
-            with transaction.atomic():
-                leave = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'data': StaffLeaveSerializer(leave).data,
-                    'message': 'Leave request submitted successfully'
-                }, status=status.HTTP_201_CREATED)
-        else:
-            return Response({
-                'success': False,
-                'errors': serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_leave_balance(request, staff_id):
-    """Get leave balance for a staff member"""
-    try:
-        staff = Staff.objects.get(id=staff_id)
+        languages_count = Staff.objects.filter(
+            department_assignments__department__department_name__icontains='Languages',
+            department_assignments__is_active=True
+        ).distinct().count()
         
-        # Calculate leave balance based on employment duration
-        employment_years = 0
-        if staff.employment_date:
-            employment_years = (date.today() - staff.employment_date).days // 365
+        technical_count = Staff.objects.filter(
+            department_assignments__department__department_name__icontains='Technical',
+            department_assignments__is_active=True
+        ).distinct().count()
         
-        # Default leave entitlements (can be customized based on policies)
-        annual_entitlement = 21 + (employment_years // 5)  # Additional day after 5 years
-        sick_entitlement = 30
-        maternity_entitlement = 90
-        paternity_entitlement = 14
-        study_entitlement = 10
-        compassionate_entitlement = 5
-        
-        # Get used leaves
-        used_leaves = StaffLeave.objects.filter(
-            staff=staff,
-            status='Approved',
-            end_date__year=date.today().year
-        )
-        
-        used_annual = used_leaves.filter(leave_type='Annual').aggregate(total=Sum('total_days'))['total'] or 0
-        used_sick = used_leaves.filter(leave_type='Sick').aggregate(total=Sum('total_days'))['total'] or 0
-        used_maternity = used_leaves.filter(leave_type='Maternity').aggregate(total=Sum('total_days'))['total'] or 0
-        used_paternity = used_leaves.filter(leave_type='Paternity').aggregate(total=Sum('total_days'))['total'] or 0
-        used_study = used_leaves.filter(leave_type='Study').aggregate(total=Sum('total_days'))['total'] or 0
-        used_compassionate = used_leaves.filter(leave_type='Compassionate').aggregate(total=Sum('total_days'))['total'] or 0
-        
-        balance = {
-            'annual': annual_entitlement - used_annual,
-            'sick': sick_entitlement - used_sick,
-            'maternity': maternity_entitlement - used_maternity,
-            'paternity': paternity_entitlement - used_paternity,
-            'study': study_entitlement - used_study,
-            'compassionate': compassionate_entitlement - used_compassionate
+        stats = {
+            'total': total_staff,
+            'active': active_staff,
+            'onLeave': on_leave_staff,
+            'jss': jss_staff,
+            'primary': primary_staff,
+            'earlyYears': early_years_staff,
+            'stem': stem_count,
+            'humanities': humanities_count,
+            'languages': languages_count,
+            'technical': technical_count
         }
         
-        serializer = LeaveBalanceSerializer(balance)
-        
         return Response({
             'success': True,
-            'data': serializer.data
+            'data': stats
         }, status=status.HTTP_200_OK)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
+        
     except Exception as e:
         return Response({
             'success': False,
@@ -431,133 +463,37 @@ def get_leave_balance(request, staff_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# ==================== LOAN MANAGEMENT VIEWS ====================
+# ==================== LOOKUP DATA ====================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def get_staff_loans(request, staff_id):
-    """Get all loans for a staff member"""
+def get_teacher_categories(request):
+    """Get all teacher categories"""
     try:
-        staff = Staff.objects.get(id=staff_id)
-        loans = StaffLoan.objects.filter(staff=staff).order_by('-applied_date')
-        serializer = StaffLoanSerializer(loans, many=True)
-        
+        categories = TeacherCategory.objects.filter(is_active=True)
+        serializer = TeacherCategorySerializer(categories, many=True)
         return Response({
             'success': True,
             'data': serializer.data
         }, status=status.HTTP_200_OK)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
     except Exception as e:
         return Response({
             'success': False,
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-# cbe_app/views/hr_views/hr_staff_mng_views.py
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def create_staff_loan(request, staff_id):
-    """Create a loan request for a staff member"""
-    try:
-        staff = Staff.objects.get(id=staff_id)
-        
-        # Check if staff has active loan
-        if StaffLoan.objects.filter(staff=staff, status__in=['Approved', 'Active', 'Disbursed']).exists():
-            return Response({
-                'success': False,
-                'error': 'Staff already has an active loan'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Log the received data for debugging
-        print("Received loan data:", request.data)
-        
-        # Get the data from request
-        data = request.data.copy()
-        
-        # Ensure all required fields are present
-        required_fields = ['loan_type', 'loan_amount', 'reason']
-        missing_fields = [field for field in required_fields if field not in data or not data[field]]
-        
-        if missing_fields:
-            return Response({
-                'success': False,
-                'error': f'Missing required fields: {", ".join(missing_fields)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Convert numeric fields
-        try:
-            data['loan_amount'] = float(data['loan_amount'])
-            if 'interest_rate' in data and data['interest_rate']:
-                data['interest_rate'] = float(data['interest_rate'])
-            if 'repayment_months' in data and data['repayment_months']:
-                data['repayment_months'] = int(data['repayment_months'])
-        except ValueError as e:
-            return Response({
-                'success': False,
-                'error': f'Invalid numeric value: {str(e)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Create serializer with context
-        serializer = StaffLoanCreateSerializer(data=data, context={'staff': staff})
-        
-        if serializer.is_valid():
-            with transaction.atomic():
-                loan = serializer.save()
-                
-                return Response({
-                    'success': True,
-                    'data': StaffLoanSerializer(loan).data,
-                    'message': 'Loan request submitted successfully'
-                }, status=status.HTTP_201_CREATED)
-        else:
-            print("Serializer errors:", serializer.errors)
-            return Response({
-                'success': False,
-                'errors': serializer.errors
-            }, status=status.HTTP_400_BAD_REQUEST)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    except Exception as e:
-        print("Exception:", str(e))
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-
-# ==================== PAYROLL VIEWS ====================
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def get_staff_payroll(request, staff_id):
-    """Get payroll records for a staff member"""
+def get_jss_departments(request):
+    """Get all JSS departments"""
     try:
-        staff = Staff.objects.get(id=staff_id)
-        payroll_records = PayrollRecord.objects.filter(staff=staff).select_related('payroll_period').order_by('-payroll_period__pay_date')
-        serializer = PayrollRecordSerializer(payroll_records, many=True)
-        
+        departments = JSSDepartment.objects.filter(is_active=True)
+        serializer = JSSDepartmentSerializer(departments, many=True)
         return Response({
             'success': True,
             'data': serializer.data
         }, status=status.HTTP_200_OK)
-    
-    except Staff.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Staff member not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
     except Exception as e:
         return Response({
             'success': False,
@@ -565,114 +501,116 @@ def get_staff_payroll(request, staff_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# ==================== BULK OPERATIONS VIEWS ====================
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_grade_levels(request):
+    """Get all grade levels"""
+    try:
+        grade_levels = GradeLevel.objects.all().order_by('level')
+        serializer = GradeLevelSerializer(grade_levels, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_departments(request):
+    """Get all departments (academic and administrative)"""
+    try:
+        departments = Department.objects.filter(is_active=True)
+        serializer = DepartmentSerializer(departments, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ==================== BULK OPERATIONS ====================
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def bulk_create_staff(request):
-    """Bulk create staff from Excel file"""
+    """Bulk create staff members from CSV/JSON data"""
     try:
-        if request.user.role not in ['hr_manager', 'system_admin', 'admin']:
-            return Response({
-                'success': False,
-                'error': 'You do not have permission to perform bulk upload'
-            }, status=status.HTTP_403_FORBIDDEN)
+        data = request.data
         
-        file = request.FILES.get('file')
-        if not file:
-            return Response({
-                'success': False,
-                'error': 'No file provided'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
+        # Handle CSV upload
+        if 'file' in request.FILES:
+            file = request.FILES['file']
+            file_content = file.read().decode('utf-8')
+            
             if file.name.endswith('.csv'):
-                df = pd.read_csv(file)
+                csv_reader = csv.DictReader(io.StringIO(file_content))
+                staff_data = list(csv_reader)
+            elif file.name.endswith(('.xlsx', '.xls')):
+                workbook = openpyxl.load_workbook(io.BytesIO(file_content))
+                sheet = workbook.active
+                headers = [cell.value for cell in sheet[1]]
+                staff_data = []
+                for row in sheet.iter_rows(min_row=2, values_only=True):
+                    staff_data.append(dict(zip(headers, row)))
             else:
-                df = pd.read_excel(file, engine='openpyxl')
-        except Exception as e:
+                return Response({
+                    'success': False,
+                    'error': 'Unsupported file format. Use CSV or Excel.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            staff_data = data.get('staff_members', [])
+        
+        if not staff_data:
             return Response({
                 'success': False,
-                'error': f'Failed to read file: {str(e)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        required_columns = ['first_name', 'last_name', 'email', 'phone', 'department', 'designation']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        
-        if missing_columns:
-            return Response({
-                'success': False,
-                'error': f'Missing required columns: {", ".join(missing_columns)}'
+                'error': 'No staff data provided'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         created_staff = []
         errors = []
         
-        for index, row in df.iterrows():
+        for idx, staff_info in enumerate(staff_data):
             try:
-                if pd.isna(row.get('first_name')) or pd.isna(row.get('last_name')):
-                    continue
-                
-                staff_data = {
-                    'first_name': str(row.get('first_name')).strip(),
-                    'last_name': str(row.get('last_name')).strip(),
-                    'personal_email': str(row.get('email')).strip() if not pd.isna(row.get('email')) else None,
-                    'personal_phone': str(row.get('phone')).strip() if not pd.isna(row.get('phone')) else None,
-                    'department': str(row.get('department')).strip() if not pd.isna(row.get('department')) else None,
-                    'designation': str(row.get('designation')).strip() if not pd.isna(row.get('designation')) else None,
-                    'gender': str(row.get('gender')).strip() if not pd.isna(row.get('gender')) else 'Male',
-                    'date_of_birth': parse_date(row.get('date_of_birth')),
-                    'national_id': str(row.get('national_id')).strip() if not pd.isna(row.get('national_id')) else None,
-                    'employment_type': str(row.get('employment_type')).strip() if not pd.isna(row.get('employment_type')) else 'Permanent',
-                    'employment_date': parse_date(row.get('employment_date')) or date.today(),
-                    'basic_salary': float(row.get('basic_salary')) if not pd.isna(row.get('basic_salary')) else 0,
-                    'bank_name': str(row.get('bank_name')).strip() if not pd.isna(row.get('bank_name')) else None,
-                    'account_number': str(row.get('account_number')).strip() if not pd.isna(row.get('account_number')) else None,
-                    'kra_pin': str(row.get('kra_pin')).strip() if not pd.isna(row.get('kra_pin')) else None,
-                    'nssf_no': str(row.get('nssf_no')).strip() if not pd.isna(row.get('nssf_no')) else None,
-                    'nhif_no': str(row.get('nhif_no')).strip() if not pd.isna(row.get('nhif_no')) else None,
-                    'emergency_contact': str(row.get('emergency_contact')).strip() if not pd.isna(row.get('emergency_contact')) else None,
-                    'emergency_contact_name': str(row.get('emergency_contact_name')).strip() if not pd.isna(row.get('emergency_contact_name')) else None,
-                    'status': 'Active'
-                }
-                
-                if not staff_data['personal_email']:
-                    raise ValueError("Email is required")
-                if not staff_data['personal_phone']:
-                    raise ValueError("Phone number is required")
-                
-                if Staff.objects.filter(personal_email=staff_data['personal_email']).exists():
-                    raise ValueError(f"Email {staff_data['personal_email']} already exists")
-                
-                # Create staff using serializer
-                serializer = StaffCreateSerializer(data=staff_data)
+                serializer = StaffCreateUpdateSerializer(data=staff_info)
                 if serializer.is_valid():
-                    staff = serializer.save(created_by=request.user)
+                    staff = Staff.objects.create(
+                        **serializer.validated_data,
+                        created_by=request.user,
+                        status='Active'
+                    )
                     created_staff.append({
-                        'staff_id': staff.staff_id,
+                        'id': str(staff.id),
                         'name': staff.full_name,
-                        'email': staff.personal_email
+                        'teacher_code': staff.teacher_code
                     })
                 else:
-                    raise ValueError(f"Validation error: {serializer.errors}")
-                
+                    errors.append({
+                        'row': idx + 2,  # +2 for header row offset
+                        'errors': serializer.errors
+                    })
             except Exception as e:
                 errors.append({
-                    'row': index + 2,
-                    'error': str(e)
+                    'row': idx + 2,
+                    'errors': str(e)
                 })
         
         return Response({
             'success': True,
-            'data': {
-                'created': created_staff,
-                'created_count': len(created_staff),
-                'errors': errors,
-                'failed_count': len(errors)
-            },
-            'message': f'Successfully created {len(created_staff)} staff members. {len(errors)} errors.'
+            'created_count': len(created_staff),
+            'error_count': len(errors),
+            'created_staff': created_staff,
+            'errors': errors
         }, status=status.HTTP_201_CREATED)
-    
+        
     except Exception as e:
         return Response({
             'success': False,
@@ -683,62 +621,29 @@ def bulk_create_staff(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def download_template(request):
-    """Download Excel template for bulk upload"""
+    """Download CSV template for bulk staff upload"""
     try:
-        template_data = {
-            'first_name': ['John', 'Mary'],
-            'last_name': ['Doe', 'Jane'],
-            'email': ['john.doe@example.com', 'mary.jane@example.com'],
-            'phone': ['0712345678', '0723456789'],
-            'department': ['Teaching', 'Administration'],
-            'designation': ['Teacher', 'Accountant'],
-            'gender': ['Male', 'Female'],
-            'date_of_birth': ['1990-01-01', '1985-05-15'],
-            'national_id': ['12345678', '87654321'],
-            'employment_type': ['Permanent', 'Contract'],
-            'employment_date': ['2024-01-01', '2024-02-01'],
-            'basic_salary': [50000, 60000],
-            'bank_name': ['Equity Bank', 'KCB Bank'],
-            'account_number': ['1234567890', '0987654321'],
-            'kra_pin': ['A123456789B', 'B987654321C'],
-            'nssf_no': ['NS123456', 'NS654321'],
-            'nhif_no': ['NH123456', 'NH654321'],
-            'emergency_contact': ['0712345678', '0723456789'],
-            'emergency_contact_name': ['Jane Doe', 'John Smith']
-        }
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="staff_import_template.csv"'
         
-        df = pd.DataFrame(template_data)
-        output = io.BytesIO()
+        writer = csv.writer(response)
+        writer.writerow([
+            'first_name', 'middle_name', 'last_name', 'date_of_birth', 'gender',
+            'national_id', 'personal_email', 'personal_phone', 'permanent_address',
+            'employment_type', 'employment_date', 'designation', 'teacher_category_code',
+            'highest_qualification', 'specialization'
+        ])
         
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Staff Template', index=False)
-            
-            # Add instructions sheet
-            instructions = pd.DataFrame({
-                'Column': list(template_data.keys()),
-                'Required': ['Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No', 'No'],
-                'Description': [
-                    'First name of staff member', 'Last name of staff member',
-                    'Email address (must be unique)', 'Phone number (must be unique)',
-                    'Department (Teaching, Administration, ICT, etc.)', 'Job title/designation',
-                    'Male/Female/Other', 'Date of birth (YYYY-MM-DD)', 'National ID number',
-                    'Permanent/Contract/Probation/Part-time/Intern', 'Employment start date (YYYY-MM-DD)',
-                    'Monthly salary in KES', 'Bank name', 'Bank account number', 'KRA PIN number',
-                    'NSSF number', 'NHIF number', 'Emergency contact phone', 'Emergency contact name'
-                ]
-            })
-            instructions.to_excel(writer, sheet_name='Instructions', index=False)
-        
-        output.seek(0)
-        
-        response = HttpResponse(
-            output.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        response['Content-Disposition'] = 'attachment; filename="staff_import_template.xlsx"'
+        # Add sample row
+        writer.writerow([
+            'John', '', 'Doe', '1990-01-15', 'Male',
+            '12345678', 'john.doe@example.com', '0712345678', 'Nairobi, Kenya',
+            'Permanent', '2024-01-01', 'Senior Teacher', 'JSS',
+            'Bachelor of Education', 'Mathematics'
+        ])
         
         return response
-    
+        
     except Exception as e:
         return Response({
             'success': False,
@@ -749,60 +654,103 @@ def download_template(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def export_staff(request):
-    """Export staff data to Excel"""
+    """Export staff data to CSV"""
     try:
-        department = request.query_params.get('department')
-        status_filter = request.query_params.get('status')
+        format_type = request.query_params.get('format', 'csv')
+        staff = Staff.objects.select_related('teacher_category').all()
         
-        queryset = Staff.objects.filter(archived=False).select_related('user')
-        
-        if department and department != '':
-            queryset = queryset.filter(department__iexact=department)
-        
-        if status_filter and status_filter != '':
-            queryset = queryset.filter(status__iexact=status_filter)
-        
-        export_data = []
-        for staff in queryset:
-            export_data.append({
-                'Staff ID': staff.staff_id,
-                'First Name': staff.first_name,
-                'Last Name': staff.last_name,
-                'Email': staff.personal_email,
-                'Phone': staff.personal_phone,
-                'Department': staff.department,
-                'Designation': staff.designation,
-                'Employment Type': staff.employment_type,
-                'Basic Salary': float(staff.basic_salary) if staff.basic_salary else 0,
-                'Status': staff.status,
-                'Gender': staff.gender,
-                'Date of Birth': staff.date_of_birth.strftime('%Y-%m-%d') if staff.date_of_birth else '',
-                'National ID': staff.national_id or '',
-                'Bank Name': staff.bank_name or '',
-                'Account Number': staff.account_number or '',
-                'KRA PIN': staff.kra_pin or '',
-                'NSSF No': staff.nssf_no or '',
-                'NHIF No': staff.nhif_no or '',
-                'Emergency Contact': staff.emergency_contact or '',
-                'Emergency Contact Name': staff.emergency_contact_name or ''
+        data = []
+        for s in staff:
+            data.append({
+                'Staff ID': s.staff_id,
+                'Teacher Code': s.teacher_code,
+                'First Name': s.first_name,
+                'Middle Name': s.middle_name or '',
+                'Last Name': s.last_name,
+                'Full Name': s.full_name,
+                'Date of Birth': s.date_of_birth,
+                'Gender': s.gender,
+                'National ID': s.national_id,
+                'Email': s.personal_email,
+                'Phone': s.personal_phone,
+                'Designation': s.designation,
+                'Category': s.teacher_category.code if s.teacher_category else '',
+                'Employment Type': s.employment_type,
+                'Employment Date': s.employment_date,
+                'Status': s.status
             })
         
-        df = pd.DataFrame(export_data)
-        output = io.BytesIO()
+        if format_type == 'csv':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="staff_export.csv"'
+            
+            if data:
+                writer = csv.DictWriter(response, fieldnames=data[0].keys())
+                writer.writeheader()
+                writer.writerows(data)
+            
+            return response
         
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Staff Export', index=False)
+        return Response({
+            'success': True,
+            'data': data
+        }, status=status.HTTP_200_OK)
         
-        output.seek(0)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_unassigned_staff(request):
+    """Get staff members not assigned to any active department"""
+    try:
+        # Get staff with active department assignments
+        staff_with_assignments = DepartmentStaffAssignment.objects.filter(
+            is_active=True
+        ).values_list('staff_id', flat=True).distinct()
         
-        response = HttpResponse(
-            output.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-        response['Content-Disposition'] = f'attachment; filename="staff_export_{date.today()}.xlsx"'
+        # Get active staff without any department assignments
+        unassigned_staff = Staff.objects.exclude(
+            id__in=staff_with_assignments
+        ).filter(
+            status='Active'
+        ).select_related('teacher_category')
         
-        return response
-    
+        # Apply search if provided
+        search = request.query_params.get('search', '')
+        if search:
+            unassigned_staff = unassigned_staff.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(teacher_code__icontains=search) |
+                Q(staff_id__icontains=search) |
+                Q(personal_email__icontains=search)
+            )
+        
+        # Also include staff who only have inactive assignments
+        staff_with_only_inactive = Staff.objects.filter(
+            department_assignments__is_active=False
+        ).exclude(
+            id__in=Staff.objects.filter(department_assignments__is_active=True)
+        ).filter(
+            status='Active'
+        ).distinct()
+        
+        # Combine and deduplicate
+        all_unassigned = list(unassigned_staff) + list(staff_with_only_inactive)
+        unique_unassigned = {s.id: s for s in all_unassigned}.values()
+        
+        from cbe_app.serializers.hr_serializers.hr_staff_mng_serializers import UnassignedStaffSerializer
+        serializer = UnassignedStaffSerializer(unique_unassigned, many=True)
+        
+        return Response({
+            'success': True,
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+        
     except Exception as e:
         return Response({
             'success': False,
