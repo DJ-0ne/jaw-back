@@ -459,32 +459,13 @@ class BulkStaffCreateSerializer(serializers.Serializer):
 
 class DepartmentListSerializer(serializers.ModelSerializer):
     staff_count = serializers.SerializerMethodField()
-    staff_assignments = serializers.SerializerMethodField()
     
     class Meta:
         model = Department
-        fields = ['id', 'department_code', 'department_name', 'department_type', 'description', 'is_active', 'staff_count', 'staff_assignments']
+        fields = ['id', 'department_code', 'department_name', 'department_type', 'description', 'is_active', 'staff_count']
     
     def get_staff_count(self, obj):
         return obj.staff_assignments.filter(is_active=True).count()
-    
-    def get_staff_assignments(self, obj):
-        assignments = obj.staff_assignments.filter(is_active=True).select_related('staff')
-        data = []
-        for a in assignments:
-            data.append({
-                'id': str(a.id),
-                'staff_id': str(a.staff.id),
-                'first_name': a.staff.first_name,
-                'last_name': a.staff.last_name,
-                'full_name': f"{a.staff.first_name} {a.staff.last_name}",
-                'designation': a.staff.designation,
-                'teacher_code': a.staff.teacher_code,
-                'role': a.role,
-                'is_primary': a.is_primary,
-                'teaching_subjects': []
-            })
-        return data
         
 
 

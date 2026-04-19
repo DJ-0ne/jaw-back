@@ -17,39 +17,45 @@ from cbe_app.serializers.hr_serializers.hr_staff_mng_serializers import (
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_departments(request):
-    """Get list of departments with optional filtering"""
     try:
-        queryset = Department.objects.filter(is_active=True)
+        departments = Department.objects.filter(is_active=True)
         
-        # Filter by department type
-        dept_type = request.query_params.get('type', '')
-        if dept_type and dept_type != 'all':
-            queryset = queryset.filter(department_type=dept_type)
+        result = []
+        for dept in departments:
+            # Count active assignments
+            staff_count = dept.staff_assignments.filter(is_active=True).count()
+            
+            # Get staff assignments
+            assignments = dept.staff_assignments.filter(is_active=True).select_related('staff')
+            staff_assignments = []
+            for a in assignments:
+                staff_assignments.append({
+                    'id': str(a.id),
+                    'staff_id': str(a.staff.id),
+                    'first_name': a.staff.first_name,
+                    'last_name': a.staff.last_name,
+                    'designation': a.staff.designation,
+                    'teacher_code': a.staff.teacher_code,
+                    'role': a.role,
+                    'is_primary': a.is_primary,
+                    'teaching_subjects': []
+                })
+            
+            result.append({
+                'id': str(dept.id),
+                'department_code': dept.department_code,
+                'department_name': dept.department_name,
+                'department_type': dept.department_type,
+                'description': dept.description,
+                'is_active': dept.is_active,
+                'staff_count': staff_count,
+                'staff_assignments': staff_assignments
+            })
         
-        # Search filter
-        search = request.query_params.get('search', '')
-        if search:
-            queryset = queryset.filter(
-                Q(department_name__icontains=search) |
-                Q(department_code__icontains=search)
-            )
-        
-        # Order by name
-        departments = queryset.order_by('department_name')
-        
-        # Serialize with staff assignments
-        serializer = DepartmentListSerializer(departments, many=True)
-        
-        return Response({
-            'success': True,
-            'data': serializer.data
-        }, status=status.HTTP_200_OK)
-        
+        return Response({'success': True, 'data': result})
     except Exception as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'success': False, 'error': str(e)})
+    
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_department_detail(request, department_id):
@@ -317,3 +323,4 @@ def remove_department_head(request, department_id):
             'success': False,
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        

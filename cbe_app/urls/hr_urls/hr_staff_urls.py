@@ -24,7 +24,6 @@ urlpatterns = [
     path('teacher-categories/', views.get_teacher_categories, name='teacher-categories'),
     path('jss-departments/', views.get_jss_departments, name='jss-departments'),
     path('grade-levels/', views.get_grade_levels, name='grade-levels'),
-    path('departments/', views.get_departments, name='departments'),
     
     # Bulk Operations
     path('staff/bulk/', views.bulk_create_staff, name='bulk-create-staff'),

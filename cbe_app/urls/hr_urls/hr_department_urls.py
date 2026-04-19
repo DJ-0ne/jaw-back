@@ -12,9 +12,10 @@ urlpatterns = [
     path('delete/<uuid:department_id>/', views.delete_department, name='delete-department'),
     
     # Department Statistics
-    path('departments/stats/', views.get_department_stats, name='department-stats'),
+    path('stats/', views.get_department_stats, name='department-stats'),
     
     # Department Head Management
     path('<uuid:department_id>/set-head/', views.set_department_head, name='set-department-head'),
     path('<uuid:department_id>/remove-head/', views.remove_department_head, name='remove-department-head'),
+    
 ]
