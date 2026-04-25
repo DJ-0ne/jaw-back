@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 import uuid
 import logging
 
-from ...models import User, UserSession
+from ...models import User, UserSession, AuditLog
 from cbe_app.serializers.auth_serializers.auth_serializers import *
 from ...services.email.otp_service import OTPService
 
@@ -55,6 +55,30 @@ def create_user_session(user, request, tokens):
     return session
 
 
+def create_audit_log(user, event_type, request, table_name="User", operation=None, 
+                     old_values=None, new_values=None, success=True, error_message=None):
+    """Helper function to create audit logs"""
+    try:
+        AuditLog.objects.create(
+            user=user,
+            username=user.username if user else None,
+            user_role=user.role if user else None,
+            event_type=event_type,
+            table_name=table_name,
+            operation=operation,
+            old_values=old_values,
+            new_values=new_values,
+            ip_address=request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
+            endpoint=request.path,
+            http_method=request.method,
+        )
+        if not success and error_message:
+            logger.error(f"Audit: {event_type} failed - {error_message}")
+    except Exception as e:
+        logger.error(f"Failed to create audit log: {str(e)}")
+
+
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def register(request):
@@ -69,6 +93,17 @@ def register(request):
             session = create_user_session(user, request, tokens)
             user_data = UserSerializer(user).data
             
+            # AUDIT: User registration successful
+            create_audit_log(
+                user=user,
+                event_type='USER_CREATE',
+                request=request,
+                table_name='User',
+                operation='INSERT',
+                new_values={'email': user.email, 'username': user.username, 'role': user.role},
+                success=True
+            )
+            
             return Response({
                 'message': 'User registered successfully',
                 'user': user_data,
@@ -78,6 +113,15 @@ def register(request):
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
+            # AUDIT: Registration failed
+            create_audit_log(
+                user=None,
+                event_type='USER_CREATE',
+                request=request,
+                table_name='User',
+                success=False,
+                error_message=str(e)
+            )
             logger.error(f"Registration error: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
@@ -105,6 +149,15 @@ def login(request):
             # Verify OTP
             is_valid, message = OTPService.verify_otp(user, otp_code, 'force_logout')
             if not is_valid:
+                # AUDIT: OTP verification failed
+                create_audit_log(
+                    user=user,
+                    event_type='USER_LOGIN',
+                    request=request,
+                    table_name='User',
+                    success=False,
+                    error_message=message
+                )
                 return Response({
                     'success': False,
                     'error': message,
@@ -115,6 +168,17 @@ def login(request):
             tokens = get_tokens_for_user(user)
             session = create_user_session(user, request, tokens)
             user_data = UserSerializer(user).data
+            
+            # AUDIT: Force logout login successful
+            create_audit_log(
+                user=user,
+                event_type='USER_LOGIN',
+                request=request,
+                table_name='User',
+                operation='SELECT',
+                new_values={'login_type': 'force_logout_with_otp'},
+                success=True
+            )
             
             return Response({
                 'success': True,
@@ -133,6 +197,17 @@ def login(request):
             # Send OTP to user's email
             success, message, _ = OTPService.send_otp(user, 'force_logout')
             
+            # AUDIT: Force logout initiated
+            create_audit_log(
+                user=user,
+                event_type='USER_LOGOUT',
+                request=request,
+                table_name='UserSession',
+                operation='UPDATE',
+                new_values={'action': 'force_logout_initiated', 'all_sessions_revoked': True},
+                success=success
+            )
+            
             if success:
                 return Response({
                     'success': False,
@@ -148,6 +223,15 @@ def login(request):
         
         # CASE 3: Normal login - has active session
         if has_active_session:
+            # AUDIT: Blocked login due to active session
+            create_audit_log(
+                user=user,
+                event_type='USER_LOGIN',
+                request=request,
+                table_name='User',
+                success=False,
+                error_message='Active session exists on another device'
+            )
             return Response({
                 'success': False,
                 'error': 'User is already logged in on another device.',
@@ -159,6 +243,17 @@ def login(request):
         tokens = get_tokens_for_user(user)
         session = create_user_session(user, request, tokens)
         user_data = UserSerializer(user).data
+        
+        # AUDIT: Normal login successful
+        create_audit_log(
+            user=user,
+            event_type='USER_LOGIN',
+            request=request,
+            table_name='User',
+            operation='SELECT',
+            new_values={'login_type': 'normal'},
+            success=True
+        )
        
         return Response({
             'success': True,
@@ -170,6 +265,7 @@ def login(request):
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
@@ -216,17 +312,38 @@ def logout(request):
                 except Exception:
                     pass
             
+            # AUDIT: Logout successful (single session)
+            create_audit_log(
+                user=request.user,
+                event_type='USER_LOGOUT',
+                request=request,
+                table_name='UserSession',
+                operation='UPDATE',
+                new_values={'session_revoked': True},
+                success=True
+            )
+            
             return Response({
                 'message': 'Logout successful',
                 'session_revoked': True
             }, status=status.HTTP_200_OK)
         else:
             # If no specific session found, revoke all sessions for this user
-            # (This handles edge cases)
             sessions_revoked = UserSession.objects.filter(
                 user=request.user, 
                 revoked=False
             ).update(revoked=True)
+            
+            # AUDIT: Logout successful (all sessions)
+            create_audit_log(
+                user=request.user,
+                event_type='USER_LOGOUT',
+                request=request,
+                table_name='UserSession',
+                operation='UPDATE',
+                new_values={'all_sessions_revoked': True, 'count': sessions_revoked},
+                success=True
+            )
             
             return Response({
                 'message': f'Logout successful. {sessions_revoked} session(s) revoked.',
@@ -271,6 +388,17 @@ def refresh_token(request):
         session.refresh_token = new_tokens['refresh']
         session.last_activity = timezone.now()
         session.save()
+        
+        # AUDIT: Token refreshed
+        create_audit_log(
+            user=user,
+            event_type='USER_LOGIN',
+            request=request,
+            table_name='UserSession',
+            operation='UPDATE',
+            new_values={'action': 'token_refreshed'},
+            success=True
+        )
         
         return Response({
             'access': new_tokens['access'],
@@ -344,10 +472,23 @@ def get_user_profile(request):
 @permission_classes([permissions.IsAuthenticated])
 def update_user_profile(request):
     """Update user profile"""
+    old_data = {'first_name': request.user.first_name, 'last_name': request.user.last_name, 'phone': request.user.phone}
     serializer = UserSerializer(request.user, data=request.data, partial=True)
     
     if serializer.is_valid():
         serializer.save()
+        
+        # AUDIT: User profile updated
+        create_audit_log(
+            user=request.user,
+            event_type='USER_UPDATE',
+            request=request,
+            table_name='User',
+            operation='UPDATE',
+            old_values=old_data,
+            new_values=request.data,
+            success=True
+        )
         return Response(serializer.data)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -385,6 +526,17 @@ def revoke_session(request, session_id):
         
         session.revoked = True
         session.save()
+        
+        # AUDIT: Session revoked
+        create_audit_log(
+            user=request.user,
+            event_type='USER_LOGOUT',
+            request=request,
+            table_name='UserSession',
+            operation='UPDATE',
+            new_values={'session_revoked': True, 'session_id': str(session.id)},
+            success=True
+        )
         
         return Response({'message': 'Session revoked successfully'})
     except UserSession.DoesNotExist:
@@ -435,6 +587,18 @@ def request_password_reset_otp(request):
     user = User.objects.get(email__iexact=email)
     
     success, message, _ = OTPService.send_otp(user, 'password_reset')
+    
+    # AUDIT: Password reset OTP requested
+    create_audit_log(
+        user=user,
+        event_type='USER_UPDATE',
+        request=request,
+        table_name='User',
+        operation='SELECT',
+        new_values={'action': 'password_reset_otp_requested'},
+        success=success,
+        error_message=message if not success else None
+    )
     
     if success:
         return Response({
@@ -504,6 +668,17 @@ def reset_password(request):
     
     # Revoke all sessions after password change
     UserSession.objects.filter(user=user, revoked=False).update(revoked=True)
+    
+    # AUDIT: Password reset successful
+    create_audit_log(
+        user=user,
+        event_type='USER_UPDATE',
+        request=request,
+        table_name='User',
+        operation='UPDATE',
+        new_values={'action': 'password_reset', 'all_sessions_revoked': True},
+        success=True
+    )
     
     return Response({
         'success': True,
