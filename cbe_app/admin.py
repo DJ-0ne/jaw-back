@@ -43,7 +43,8 @@ from .models import (
     
     # Attendance & Discipline
     AttendanceSession, StudentAttendance, DisciplineCategory, DisciplineIncident,
-    StudentDisciplinePoints,
+    StudentDisciplinePoints,ConductRecord, InterventionProgram, InterventionEnrollment,
+    CounselingSession, Suspension, DisciplineReport,
     
     # Human Resources
     Staff,  TeacherCategory, JSSDepartment, StaffLeave, LeaveBalance,
@@ -57,15 +58,15 @@ from .models import (
     Parent,
     
     # System & Audit
-    AuditLog, BackupHistory, SystemSetting, Holiday, Notification, Timetable,
+    AuditLog, BackupHistory, SystemSetting, Holiday, Notification, Timetable, OTPCode,
     
     # CBE Report Cards
     CBEReportCard,
 )
 
 # ==================== ADMIN SITE CONFIGURATION ====================
-admin.site.site_header = 'Kenya CBE School System Administration'
-admin.site.site_title = 'CBE School Admin'
+admin.site.site_header = 'Jawabu School System Administration'
+admin.site.site_title = 'Jawabu School Admin'
 admin.site.index_title = 'Dashboard'
 admin.site.enable_nav_sidebar = True
 
@@ -1029,6 +1030,234 @@ class StudentDisciplinePointsAdmin(BaseModelAdmin, ExportCsvMixin):
     raw_id_fields = ['student']
     actions = ['export_as_csv']
 
+
+@admin.register(ConductRecord)
+class ConductRecordAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['student', 'academic_year', 'term', 'conduct_grade', 
+                   'merits', 'demerits', 'total_points', 'status', 'last_updated']
+    list_filter = ['conduct_grade', 'status', 'academic_year', 'term']
+    search_fields = ['student__admission_no', 'student__first_name', 'student__last_name']
+    raw_id_fields = ['student']
+    actions = ['export_as_csv', 'add_merits', 'add_demerits']
+    
+    fieldsets = (
+        ('Student Information', {
+            'fields': ('student', 'academic_year', 'term')
+        }),
+        ('Points Summary', {
+            'fields': ('merits', 'demerits', 'total_points')
+        }),
+        ('Conduct Grade', {
+            'fields': ('conduct_grade', 'status')
+        }),
+        ('Remarks', {
+            'fields': ('remarks',)
+        }),
+        ('Audit', {
+            'fields': ('id', 'last_updated', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def add_merits(self, request, queryset):
+        for record in queryset:
+            record.merits += 5
+            record.save()
+        self.message_user(request, f'Added 5 merits to {queryset.count()} record(s).')
+    add_merits.short_description = "Add 5 merits"
+    
+    def add_demerits(self, request, queryset):
+        for record in queryset:
+            record.demerits += 5
+            record.save()
+        self.message_user(request, f'Added 5 demerits to {queryset.count()} record(s).')
+    add_demerits.short_description = "Add 5 demerits"
+
+
+@admin.register(InterventionProgram)
+class InterventionProgramAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['program_code', 'program_name', 'program_type', 'facilitator',
+                   'max_students', 'status', 'start_date', 'end_date']
+    list_filter = ['program_type', 'status']
+    search_fields = ['program_code', 'program_name', 'facilitator']
+    actions = ['export_as_csv', 'activate_programs', 'complete_programs']
+    
+    fieldsets = (
+        ('Program Details', {
+            'fields': ('program_code', 'program_name', 'program_type', 'description')
+        }),
+        ('Schedule', {
+            'fields': ('duration_weeks', 'start_date', 'end_date')
+        }),
+        ('Resources', {
+            'fields': ('facilitator', 'max_students')
+        }),
+        ('Status', {
+            'fields': ('status',)
+        }),
+        ('Audit', {
+            'fields': ('created_by', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def activate_programs(self, request, queryset):
+        updated = queryset.update(status='Active')
+        self.message_user(request, f'{updated} program(s) activated.')
+    activate_programs.short_description = "Activate selected programs"
+    
+    def complete_programs(self, request, queryset):
+        updated = queryset.update(status='Completed')
+        self.message_user(request, f'{updated} program(s) marked as completed.')
+    complete_programs.short_description = "Mark as completed"
+
+
+@admin.register(InterventionEnrollment)
+class InterventionEnrollmentAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['program', 'student', 'enrollment_date', 'completion_date', 
+                   'status', 'progress_percentage']
+    list_filter = ['status', 'program__program_type']
+    search_fields = ['program__program_name', 'student__admission_no', 'student__first_name']
+    raw_id_fields = ['program', 'student']
+    actions = ['export_as_csv', 'update_progress']
+    
+    def update_progress(self, request, queryset):
+        for enrollment in queryset:
+            if enrollment.progress_percentage < 100:
+                enrollment.progress_percentage = min(100, enrollment.progress_percentage + 10)
+                if enrollment.progress_percentage == 100:
+                    enrollment.status = 'Completed'
+                    enrollment.completion_date = timezone.now().date()
+                enrollment.save()
+        self.message_user(request, f'Updated progress for {queryset.count()} enrollment(s).')
+    update_progress.short_description = "Increase progress by 10%"
+
+
+@admin.register(CounselingSession)
+class CounselingSessionAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['session_code', 'student', 'counselor', 'session_type',
+                   'session_date', 'session_time', 'status', 'follow_up_needed']
+    list_filter = ['session_type', 'status', 'follow_up_needed', 'session_date']
+    search_fields = ['session_code', 'student__admission_no', 'student__first_name', 
+                    'counselor__username']
+    raw_id_fields = ['student', 'counselor', 'created_by']
+    actions = ['export_as_csv', 'mark_as_completed', 'mark_as_no_show']
+    
+    fieldsets = (
+        ('Session Details', {
+            'fields': ('session_code', 'student', 'counselor', 'session_type')
+        }),
+        ('Schedule', {
+            'fields': ('session_date', 'session_time', 'duration_minutes')
+        }),
+        ('Status', {
+            'fields': ('status',)
+        }),
+        ('Notes & Follow-up', {
+            'fields': ('notes', 'follow_up_needed', 'follow_up_date')
+        }),
+        ('Audit', {
+            'fields': ('created_by', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def mark_as_completed(self, request, queryset):
+        updated = queryset.update(status='Completed')
+        self.message_user(request, f'{updated} session(s) marked as completed.')
+    mark_as_completed.short_description = "Mark as completed"
+    
+    def mark_as_no_show(self, request, queryset):
+        updated = queryset.update(status='No Show')
+        self.message_user(request, f'{updated} session(s) marked as no show.')
+    mark_as_no_show.short_description = "Mark as no show"
+
+
+@admin.register(Suspension)
+class SuspensionAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['suspension_code', 'student', 'suspension_type', 'start_date',
+                   'end_date', 'total_days', 'status', 'parent_notified']
+    list_filter = ['suspension_type', 'status', 'parent_notified']
+    search_fields = ['suspension_code', 'student__admission_no', 'student__first_name']
+    raw_id_fields = ['student', 'incident', 'assigned_by']
+    actions = ['export_as_csv', 'complete_suspensions', 'notify_parents']
+    
+    fieldsets = (
+        ('Suspension Details', {
+            'fields': ('suspension_code', 'student', 'incident', 'suspension_type')
+        }),
+        ('Duration', {
+            'fields': ('start_date', 'end_date', 'total_days')
+        }),
+        ('Reason', {
+            'fields': ('reason',)
+        }),
+        ('Assignment', {
+            'fields': ('assigned_by',)
+        }),
+        ('Status', {
+            'fields': ('status',)
+        }),
+        ('Parent Communication', {
+            'fields': ('parent_notified', 'parent_notification_date', 'reentry_meeting_date')
+        }),
+        ('Notes', {
+            'fields': ('notes',)
+        }),
+        ('Audit', {
+            'fields': ('id', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def complete_suspensions(self, request, queryset):
+        updated = queryset.update(status='Completed')
+        self.message_user(request, f'{updated} suspension(s) marked as completed.')
+    complete_suspensions.short_description = "Mark as completed"
+    
+    def notify_parents(self, request, queryset):
+        updated = queryset.update(parent_notified=True, parent_notification_date=timezone.now().date())
+        self.message_user(request, f'Parent notification recorded for {updated} suspension(s).')
+    notify_parents.short_description = "Mark parent as notified"
+
+
+@admin.register(DisciplineReport)
+class DisciplineReportAdmin(BaseModelAdmin, ExportCsvMixin):
+    list_display = ['report_code', 'title', 'report_type', 'generated_by',
+                   'generated_date', 'date_range_start', 'date_range_end', 
+                   'format', 'download_count']
+    list_filter = ['report_type', 'format', 'generated_date']
+    search_fields = ['report_code', 'title', 'generated_by__username']
+    readonly_fields = ['generated_date', 'download_count']
+    actions = ['export_as_csv', 'increment_download_count']
+    
+    fieldsets = (
+        ('Report Details', {
+            'fields': ('report_code', 'title', 'report_type')
+        }),
+        ('Date Range', {
+            'fields': ('date_range_start', 'date_range_end')
+        }),
+        ('Generation', {
+            'fields': ('generated_by', 'generated_date', 'format')
+        }),
+        ('Content Options', {
+            'fields': ('includes_charts', 'includes_summary')
+        }),
+        ('File Information', {
+            'fields': ('file_url', 'file_size')
+        }),
+        ('Statistics', {
+            'fields': ('download_count', 'status')
+        }),
+        ('Audit', {
+            'fields': ('id', 'created_at', 'updated_at')
+        }),
+    )
+    
+    def increment_download_count(self, request, queryset):
+        for report in queryset:
+            report.download_count += 1
+            report.save()
+        self.message_user(request, f'Download count incremented for {queryset.count()} report(s).')
+    increment_download_count.short_description = "Increment download count"
+    
 # ==================== HR & STAFF MANAGEMENT ADMIN ====================
 
 @admin.register(TeacherCategory)

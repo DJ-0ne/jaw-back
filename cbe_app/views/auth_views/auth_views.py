@@ -12,6 +12,7 @@ import logging
 
 from ...models import User, UserSession
 from cbe_app.serializers.auth_serializers.auth_serializers import *
+from ...services.email.otp_service import OTPService
 
 logger = logging.getLogger(__name__)
 
@@ -86,25 +87,81 @@ def register(request):
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def login(request):
-    """Login user - REJECT if already logged in elsewhere"""
+    """Login user - with OTP support for force logout"""
     serializer = UserLoginSerializer(data=request.data, context={'request': request})
     
     if serializer.is_valid():
         user = serializer.validated_data['user']
         
-        # CHECK IF USER ALREADY HAS AN ACTIVE SESSION
-        # if check_active_session_exists(user):
-        #     return Response({
-        #         'error': 'User is already logged in on another device.',
-        #         'code': 'ACTIVE_SESSION_EXISTS'
-        #     }, status=status.HTTP_409_CONFLICT)
+        # Check if user already has an active session
+        has_active_session = check_active_session_exists(user)
         
-        # Generate tokens
+        # Check if this is a force logout request
+        force_logout = request.data.get('force_logout', False)
+        otp_code = request.data.get('otp_code', None)
+        
+        # CASE 1: Force logout with OTP verification (step 2)
+        if force_logout and otp_code:
+            # Verify OTP
+            is_valid, message = OTPService.verify_otp(user, otp_code, 'force_logout')
+            if not is_valid:
+                return Response({
+                    'success': False,
+                    'error': message,
+                    'code': 'INVALID_OTP'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # OTP verified - create new session and login
+            tokens = get_tokens_for_user(user)
+            session = create_user_session(user, request, tokens)
+            user_data = UserSerializer(user).data
+            
+            return Response({
+                'success': True,
+                'message': 'Login successful',
+                'user': user_data,
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
+                'session_id': str(session.id),
+            }, status=status.HTTP_200_OK)
+        
+        # CASE 2: Force logout request (step 1 - revoke sessions)
+        if force_logout:
+            # Revoke all existing sessions for this user
+            UserSession.objects.filter(user=user, revoked=False).update(revoked=True)
+            
+            # Send OTP to user's email
+            success, message, _ = OTPService.send_otp(user, 'force_logout')
+            
+            if success:
+                return Response({
+                    'success': False,
+                    'code': 'OTP_REQUIRED',
+                    'message': 'Sessions revoked. Please enter OTP sent to your email.',
+                    'email_masked': OTPService.mask_email(user.email)
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Failed to send OTP. Please try again.'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # CASE 3: Normal login - has active session
+        if has_active_session:
+            return Response({
+                'success': False,
+                'error': 'User is already logged in on another device.',
+                'code': 'ACTIVE_SESSION_EXISTS',
+                'force_logout_available': True
+            }, status=status.HTTP_409_CONFLICT)
+        
+        # CASE 4: Normal login - no active session
         tokens = get_tokens_for_user(user)
         session = create_user_session(user, request, tokens)
         user_data = UserSerializer(user).data
        
         return Response({
+            'success': True,
             'message': 'Login successful',
             'user': user_data,
             'access': tokens['access'],
@@ -113,7 +170,6 @@ def login(request):
         }, status=status.HTTP_200_OK)
     
     return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
-
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
@@ -333,3 +389,123 @@ def revoke_session(request, session_id):
         return Response({'message': 'Session revoked successfully'})
     except UserSession.DoesNotExist:
         return Response({'error': 'Session not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def resend_force_logout_otp(request):
+    """Resend OTP for force logout"""
+    serializer = ResendForceLogoutOTPSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+    email = serializer.validated_data['email']
+    
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    success, message, _ = OTPService.send_otp(user, 'force_logout')
+    
+    if success:
+        return Response({
+            'success': True,
+            'message': message,
+            'email_masked': OTPService.mask_email(user.email)
+        }, status=status.HTTP_200_OK)
+    else:
+        return Response({
+            'success': False,
+            'error': message
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def request_password_reset_otp(request):
+    """Request OTP for password reset"""
+    serializer = RequestPasswordResetOTPSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+    email = serializer.validated_data['email']
+    user = User.objects.get(email__iexact=email)
+    
+    success, message, _ = OTPService.send_otp(user, 'password_reset')
+    
+    if success:
+        return Response({
+            'success': True,
+            'message': message,
+            'email_masked': OTPService.mask_email(user.email),
+            'user_id': str(user.id)
+        }, status=status.HTTP_200_OK)
+    else:
+        return Response({
+            'success': False,
+            'error': message
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def verify_password_reset_otp(request):
+    """Verify OTP for password reset"""
+    serializer = VerifyPasswordResetOTPSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+    email = serializer.validated_data['email']
+    otp_code = serializer.validated_data['otp_code']
+    
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    is_valid, message = OTPService.verify_otp(user, otp_code, 'password_reset')
+    
+    if is_valid:
+        return Response({
+            'success': True,
+            'message': message,
+            'user_id': str(user.id)
+        }, status=status.HTTP_200_OK)
+    else:
+        return Response({
+            'success': False,
+            'error': message
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def reset_password(request):
+    """Reset password after OTP verification"""
+    serializer = ResetPasswordSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response({'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    
+    user_id = serializer.validated_data['user_id']
+    new_password = serializer.validated_data['new_password']
+    
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    user.set_password(new_password)
+    user.save()
+    
+    # Revoke all sessions after password change
+    UserSession.objects.filter(user=user, revoked=False).update(revoked=True)
+    
+    return Response({
+        'success': True,
+        'message': 'Password reset successfully. Please login with your new password.'
+    }, status=status.HTTP_200_OK)

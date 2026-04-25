@@ -204,6 +204,39 @@ class PasswordHistory(models.Model):
     changed_at = models.DateTimeField(auto_now_add=True)
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='changed_passwords')
     
+    
+# ==================== OTP MANAGEMENT ====================
+
+class OTPCode(BaseModel):
+    """OTP codes for force logout and password reset verification"""
+    
+    OTP_TYPE_CHOICES = [
+        ('force_logout', 'Force Logout Verification'),
+        ('password_reset', 'Password Reset Verification'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='otp_codes')
+    otp_code = models.CharField(max_length=6)
+    otp_type = models.CharField(max_length=20, choices=OTP_TYPE_CHOICES)
+    is_used = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user']),
+            models.Index(fields=['otp_code']),
+            models.Index(fields=['otp_type']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.otp_code} - {self.user.email} - {self.otp_type}"
+    
+    def is_valid(self):
+        """Check if OTP is still valid (not used and not expired)"""
+        return not self.is_used and self.expires_at > timezone.now()
+    
 # ==================== STUDENT MANAGEMENT ====================
 class Student(BaseModel):
     GENDER_CHOICES = [('Male', 'Male'), ('Female', 'Female'), ('Other', 'Other')]
@@ -1235,7 +1268,7 @@ class AttendanceSession(BaseModel):
     period_number = models.IntegerField(blank=True, null=True)
     start_time = models.TimeField()
     end_time = models.TimeField(blank=True, null=True)
-    conducted_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='conducted_sessions')
+    conducted_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='attendance_conducted_sessions')
     is_active = models.BooleanField(default=True)
     
     class Meta:
@@ -1369,6 +1402,233 @@ class StudentDisciplinePoints(BaseModel):
     
     def __str__(self):
         return f"{self.student.admission_no} - {self.academic_year} {self.term}"
+    
+    
+# ==================== DISCIPLINE MODELS ADDITIONS ====================
+
+class ConductRecord(BaseModel):
+    """Student conduct record tracking merits and demerits"""
+    
+    CONDUCT_GRADE_CHOICES = [
+        ('A', 'Excellent'),
+        ('B', 'Good'),
+        ('C', 'Satisfactory'),
+        ('D', 'Needs Improvement'),
+        ('F', 'Poor'),
+    ]
+    
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='conduct_records')
+    academic_year = models.CharField(max_length=9)
+    term = models.CharField(max_length=20)
+    conduct_grade = models.CharField(max_length=1, choices=CONDUCT_GRADE_CHOICES, default='C')
+    merits = models.IntegerField(default=0, validators=[MinValueValidator(0)])
+    demerits = models.IntegerField(default=0, validators=[MinValueValidator(0)])
+    total_points = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, choices=StudentDisciplinePoints.STATUS_CHOICES, default='Good')
+    remarks = models.TextField(blank=True, null=True)
+    last_updated = models.DateField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['student', 'academic_year', 'term']
+        ordering = ['-last_updated']
+    
+    def save(self, *args, **kwargs):
+        self.total_points = self.merits - self.demerits
+        if self.total_points >= 20:
+            self.conduct_grade = 'A'
+            self.status = 'Excellent'
+        elif self.total_points >= 10:
+            self.conduct_grade = 'B'
+            self.status = 'Good'
+        elif self.total_points >= 0:
+            self.conduct_grade = 'C'
+            self.status = 'Good'
+        elif self.total_points >= -10:
+            self.conduct_grade = 'D'
+            self.status = 'Warning'
+        else:
+            self.conduct_grade = 'F'
+            self.status = 'Probation'
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.student.full_name} - {self.academic_year} {self.term}: {self.conduct_grade}"
+
+
+class InterventionProgram(BaseModel):
+    """Intervention programs for students"""
+    
+    PROGRAM_TYPE_CHOICES = [
+        ('Behavioral', 'Behavioral'),
+        ('Academic', 'Academic'),
+        ('Social', 'Social'),
+        ('Counseling', 'Counseling'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('Active', 'Active'),
+        ('Scheduled', 'Scheduled'),
+        ('Completed', 'Completed'),
+        ('Cancelled', 'Cancelled'),
+    ]
+    
+    program_code = models.CharField(max_length=20, unique=True)
+    program_name = models.CharField(max_length=200)
+    program_type = models.CharField(max_length=20, choices=PROGRAM_TYPE_CHOICES)
+    description = models.TextField()
+    duration_weeks = models.IntegerField(default=4)
+    facilitator = models.CharField(max_length=100)
+    max_students = models.IntegerField(default=20)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Scheduled')
+    start_date = models.DateField()
+    end_date = models.DateField()
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    
+    def __str__(self):
+        return f"{self.program_code} - {self.program_name}"
+
+
+class InterventionEnrollment(BaseModel):
+    """Student enrollment in intervention programs"""
+    
+    ENROLLMENT_STATUS_CHOICES = [
+        ('Active', 'Active'),
+        ('Completed', 'Completed'),
+        ('Dropped', 'Dropped'),
+        ('On Hold', 'On Hold'),
+    ]
+    
+    program = models.ForeignKey(InterventionProgram, on_delete=models.CASCADE, related_name='enrollments')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='interventions')
+    enrollment_date = models.DateField(auto_now_add=True)
+    completion_date = models.DateField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=ENROLLMENT_STATUS_CHOICES, default='Active')
+    progress_percentage = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    notes = models.TextField(blank=True, null=True)
+    
+    class Meta:
+        unique_together = ['program', 'student']
+    
+    def __str__(self):
+        return f"{self.student.full_name} - {self.program.program_name}"
+
+
+class CounselingSession(BaseModel):
+    """Counseling sessions for students"""
+    
+    SESSION_TYPE_CHOICES = [
+        ('Academic Guidance', 'Academic Guidance'),
+        ('Personal Counseling', 'Personal Counseling'),
+        ('Career Counseling', 'Career Counseling'),
+        ('Crisis Intervention', 'Crisis Intervention'),
+        ('Group Session', 'Group Session'),
+    ]
+    
+    SESSION_STATUS_CHOICES = [
+        ('Scheduled', 'Scheduled'),
+        ('In Progress', 'In Progress'),
+        ('Completed', 'Completed'),
+        ('Cancelled', 'Cancelled'),
+        ('No Show', 'No Show'),
+    ]
+    
+    session_code = models.CharField(max_length=20, unique=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='counseling_sessions')
+    counselor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='conducted_sessions')
+    session_type = models.CharField(max_length=30, choices=SESSION_TYPE_CHOICES)
+    session_date = models.DateField()
+    session_time = models.TimeField()
+    duration_minutes = models.IntegerField(default=30)
+    status = models.CharField(max_length=20, choices=SESSION_STATUS_CHOICES, default='Scheduled')
+    notes = models.TextField(blank=True, null=True)
+    follow_up_needed = models.BooleanField(default=False)
+    follow_up_date = models.DateField(blank=True, null=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_sessions')
+    
+    class Meta:
+        ordering = ['-session_date', '-session_time']
+    
+    def __str__(self):
+        return f"{self.session_code} - {self.student.full_name} - {self.session_type}"
+
+
+class Suspension(BaseModel):
+    """Student suspension records"""
+    
+    SUSPENSION_TYPE_CHOICES = [
+        ('In-School', 'In-School Suspension'),
+        ('Out-of-School', 'Out-of-School Suspension'),
+    ]
+    
+    SUSPENSION_STATUS_CHOICES = [
+        ('Active', 'Active'),
+        ('Completed', 'Completed'),
+        ('Appealed', 'Appealed'),
+        ('Overturned', 'Overturned'),
+    ]
+    
+    suspension_code = models.CharField(max_length=20, unique=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='suspensions')
+    incident = models.ForeignKey(DisciplineIncident, on_delete=models.CASCADE, related_name='suspensions')
+    suspension_type = models.CharField(max_length=20, choices=SUSPENSION_TYPE_CHOICES)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    total_days = models.IntegerField()
+    reason = models.TextField()
+    assigned_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='assigned_suspensions')
+    status = models.CharField(max_length=20, choices=SUSPENSION_STATUS_CHOICES, default='Active')
+    parent_notified = models.BooleanField(default=False)
+    parent_notification_date = models.DateField(blank=True, null=True)
+    reentry_meeting_date = models.DateField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    def save(self, *args, **kwargs):
+        if self.start_date and self.end_date:
+            delta = self.end_date - self.start_date
+            self.total_days = delta.days + 1
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"{self.suspension_code} - {self.student.full_name} ({self.suspension_type})"
+
+
+class DisciplineReport(BaseModel):
+    """Generated discipline reports"""
+    
+    REPORT_TYPE_CHOICES = [
+        ('Daily', 'Daily Summary'),
+        ('Weekly', 'Weekly Analysis'),
+        ('Monthly', 'Monthly Report'),
+        ('Quarterly', 'Quarterly Review'),
+        ('Custom', 'Custom Report'),
+    ]
+    
+    REPORT_FORMAT_CHOICES = [
+        ('PDF', 'PDF'),
+        ('Excel', 'Excel'),
+        ('CSV', 'CSV'),
+    ]
+    
+    report_code = models.CharField(max_length=20, unique=True)
+    report_type = models.CharField(max_length=20, choices=REPORT_TYPE_CHOICES)
+    title = models.CharField(max_length=200)
+    generated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='generated_reports')
+    generated_date = models.DateTimeField(auto_now_add=True)
+    date_range_start = models.DateField()
+    date_range_end = models.DateField()
+    format = models.CharField(max_length=10, choices=REPORT_FORMAT_CHOICES, default='PDF')
+    file_url = models.CharField(max_length=500, blank=True, null=True)
+    file_size = models.IntegerField(blank=True, null=True)
+    download_count = models.IntegerField(default=0)
+    includes_charts = models.BooleanField(default=True)
+    includes_summary = models.BooleanField(default=True)
+    status = models.CharField(max_length=20, default='Completed')
+    
+    class Meta:
+        ordering = ['-generated_date']
+    
+    def __str__(self):
+        return f"{self.report_code} - {self.title} ({self.generated_date.date()})"
 
 
 # ==================== HR & STAFF MANAGEMENT MODELS ====================

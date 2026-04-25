@@ -207,3 +207,34 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         if value and len(value) < 10:
             raise serializers.ValidationError("Phone number must be at least 10 digits")
         return value
+    
+    
+# ==================== OTP SERIALIZERS ====================
+
+class ResendForceLogoutOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+
+class RequestPasswordResetOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    
+    def validate_email(self, value):
+        if not User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("No account found with this email address")
+        return value
+
+
+class VerifyPasswordResetOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    otp_code = serializers.CharField(required=True, min_length=6, max_length=6)
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    user_id = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=8)
+    confirm_password = serializers.CharField(required=True, min_length=8)
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match"})
+        return attrs
