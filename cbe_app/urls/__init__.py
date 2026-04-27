@@ -14,4 +14,11 @@ urlpatterns = [
     path('student/', include('cbe_app.urls.student_urls.student_dashboard_urls')),
     path('student/fees/', include('cbe_app.urls.student_urls.student_fee_urls')),  
     path('student/profile/', include('cbe_app.urls.student_urls.student_profile_urls')),
+    ########################DEPUTY ADMIN URLS########################
+    path('deputyadmin/discipline/', include('cbe_app.urls.school_deputyadmin_urls.discipline_urls')),
+    path('deputyadmin/teacher-assignments/', include('cbe_app.urls.school_deputyadmin_urls.teacher_assignment_urls')),
+    #########################TEACHER URLS########################
+    path('teacher/', include('cbe_app.urls.teacher_urls.teacher_class_urls')),
+    path('teacher/attendance/', include('cbe_app.urls.teacher_urls.teacher_attendance_urls')),
+    path('teacher/curriculum/', include('cbe_app.urls.teacher_urls.teacher_curriculum_urls')),
 ]

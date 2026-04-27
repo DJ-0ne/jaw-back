@@ -31,7 +31,7 @@ from .models import (
     
     # Academics
     Class, ClassSubjectAllocation,CurriculumVersion, LearningOutcome, CoreCompetency, 
-    CoreValue, WeightConfiguration,
+    CoreValue, WeightConfiguration,GradeLevel,
     
     # E-Learning
     Course, CourseModule, LearningContent, StudentEnrollment, ContentProgress,
@@ -1579,6 +1579,11 @@ class NotificationAdmin(BaseModelAdmin, ExportCsvMixin):
         updated = queryset.update(status='Archived')
         self.message_user(request, f'{updated} notifications archived.')
     archive_notifications.short_description = "Archive selected notifications"
+
+@admin.register(GradeLevel)
+class GradeLevelAdmin(admin.ModelAdmin):
+    list_display = ['name', 'description']
+    search_fields = ['name', 'description']
 
 @admin.register(Timetable)
 class TimetableAdmin(BaseModelAdmin, ExportCsvMixin):
