@@ -1,11 +1,7 @@
 # serializers.py - Add these serializers
 
 from rest_framework import serializers
-from cbe_app.models import (
-    Staff, Class, LearningArea, ClassSubjectAllocation, 
-    TeacherCategory, JSSDepartment, Department, AcademicYear, User,
-    GradeLevel
-)
+from cbe_app.models import *
 
 
 class TeacherProfileSerializer(serializers.ModelSerializer):
@@ -68,7 +64,6 @@ class SubjectSerializer(serializers.ModelSerializer):
     def get_display_name(self, obj):
         return f"{obj.area_name} ({obj.area_code}) - {obj.area_type or 'Core Subject'}"
 
-
 class TeacherAssignmentSerializer(serializers.ModelSerializer):
     """Serializer for teacher-class-subject assignments with full details"""
     class_name = serializers.CharField(source='class_id.class_name', read_only=True)
@@ -104,54 +99,81 @@ class TeacherAssignmentSerializer(serializers.ModelSerializer):
         return grade_level.name if grade_level else f"Grade {obj.class_id.numeric_level}"
     
     def get_teacher_name(self, obj):
+        """Get teacher name directly from Staff object"""
         if obj.teacher:
-            staff = Staff.objects.filter(user=obj.teacher, teacher_category__isnull=False).first()
-            if staff:
-                return staff.full_name
-            return obj.teacher.get_full_name()
+            return obj.teacher.full_name
         return "Not Assigned"
     
     def get_teacher_code(self, obj):
+        """Get teacher code directly from Staff object"""
         if obj.teacher:
-            staff = Staff.objects.filter(user=obj.teacher).first()
-            return staff.teacher_code if staff else None
+            return obj.teacher.teacher_code or obj.teacher.staff_id
         return None
     
     def get_teacher_specialization(self, obj):
+        """Get specialization directly from Staff object"""
         if obj.teacher:
-            staff = Staff.objects.filter(user=obj.teacher).first()
-            return staff.specialization if staff else None
+            return obj.teacher.specialization or "Not specified"
         return None
     
     def get_teacher_category(self, obj):
-        if obj.teacher:
-            staff = Staff.objects.filter(user=obj.teacher).first()
-            if staff and staff.teacher_category:
-                return staff.teacher_category.name
+        """Get teacher category name directly from Staff object"""
+        if obj.teacher and obj.teacher.teacher_category:
+            return obj.teacher.teacher_category.name
         return None
     
     def get_teacher_department(self, obj):
+        """Get department name directly from Staff object"""
         if obj.teacher:
-            staff = Staff.objects.filter(user=obj.teacher).first()
-            if staff:
-                if staff.jss_department:
-                    return staff.jss_department.name
-                elif staff.admin_department:
-                    return staff.admin_department.department_name
+            if obj.teacher.jss_department:
+                return obj.teacher.jss_department.name
+            elif obj.teacher.admin_department:
+                return obj.teacher.admin_department.department_name
         return None
-
 
 class CreateAssignmentSerializer(serializers.Serializer):
     """Serializer for creating a new teacher assignment"""
-    class_id = serializers.UUIDField()
-    subject_id = serializers.UUIDField()
-    teacher_id = serializers.UUIDField()
-    academic_year = serializers.CharField(max_length=9)
-    periods_per_week = serializers.IntegerField(min_value=1, max_value=10, default=5)
-    is_compulsory = serializers.BooleanField(default=True)
+    class_id = serializers.UUIDField(required=True)
+    subject_id = serializers.UUIDField(required=True)
+    teacher_id = serializers.UUIDField(required=True)
+    academic_year = serializers.CharField(max_length=9, required=True)
+    periods_per_week = serializers.IntegerField(min_value=1, max_value=10, default=5, required=False)
+    is_compulsory = serializers.BooleanField(default=True, required=False)
+    
+    def validate_class_id(self, value):
+        """Validate class exists"""
+        
+        if not Class.objects.filter(id=value, is_active=True).exists():
+            raise serializers.ValidationError("Class not found or inactive")
+        return value
+    
+    def validate_subject_id(self, value):
+        """Validate subject exists"""
+      
+        if not LearningArea.objects.filter(id=value, is_active=True).exists():
+            raise serializers.ValidationError("Subject not found or inactive")
+        return value
+    
+    def validate_teacher_id(self, value):
+        """Validate teacher exists and has user account"""
+      
+        staff = Staff.objects.filter(id=value).first()
+        if not staff:
+            raise serializers.ValidationError("Teacher not found")
+        if not staff.user:
+            raise serializers.ValidationError(f"Teacher {staff.full_name} does not have a user account")
+        return value
+    
+    def validate_academic_year(self, value):
+        """Validate academic year format"""
+        import re
+        if not re.match(r'^\d{4}-\d{4}$', value):
+            raise serializers.ValidationError("Academic year must be in format YYYY-YYYY (e.g., 2024-2025)")
+        return value
     
     def validate(self, data):
-        # Check if assignment already exists
+        """Check for duplicate assignment"""
+        
         existing = ClassSubjectAllocation.objects.filter(
             class_id=data['class_id'],
             subject_id=data['subject_id'],
@@ -159,18 +181,11 @@ class CreateAssignmentSerializer(serializers.Serializer):
         ).first()
         
         if existing:
-            raise serializers.ValidationError(f"This subject is already assigned to this class for {data['academic_year']}")
-        
-        # Verify teacher exists and is a valid teacher
-        try:
-            staff = Staff.objects.get(id=data['teacher_id'], teacher_category__isnull=False)
-            if not staff.user:
-                raise serializers.ValidationError(f"Teacher {staff.full_name} does not have a user account")
-        except Staff.DoesNotExist:
-            raise serializers.ValidationError("Teacher not found or invalid teacher ID")
+            raise serializers.ValidationError({
+                'non_field_errors': [f"This subject is already assigned to this class for {data['academic_year']}"]
+            })
         
         return data
-
 
 class DepartmentInfoSerializer(serializers.Serializer):
     """Serializer for department information"""

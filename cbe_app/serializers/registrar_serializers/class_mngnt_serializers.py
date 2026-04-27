@@ -1,7 +1,7 @@
-# serializers.py
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from ...models import Class, LearningArea, User, Student, AcademicYear, Term
+from cbe_app.models import Class, User, Student, Staff
+
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -12,6 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
     
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
+
 
 class ClassSerializer(serializers.ModelSerializer):
     class_teacher_name = serializers.SerializerMethodField()
@@ -29,11 +30,10 @@ class ClassSerializer(serializers.ModelSerializer):
     
     def get_class_teacher_name(self, obj):
         if obj.class_teacher:
-            return f"{obj.class_teacher.first_name} {obj.class_teacher.last_name}".strip()
+            return obj.class_teacher.full_name
         return None
     
     def get_current_students(self, obj):
-        # Count active students in this class
         return Student.objects.filter(current_class=obj, status='Active').count()
     
     def get_total_capacity_percentage(self, obj):
@@ -51,6 +51,7 @@ class ClassSerializer(serializers.ModelSerializer):
         if value < 1 or value > 12:
             raise ValidationError("Numeric level must be between 1 and 12")
         return value
+
 
 class ClassCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -75,23 +76,24 @@ class ClassCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Class code already exists")
         return value
 
+
 class StreamSerializer(serializers.Serializer):
-    """Serializer for stream data"""
     id = serializers.CharField()
     name = serializers.CharField()
     code = serializers.CharField()
 
+
 class NumericLevelSerializer(serializers.Serializer):
-    """Serializer for numeric level data"""
     level = serializers.IntegerField()
     label = serializers.CharField()
+
 
 class TeacherSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     
     class Meta:
-        model = User
-        fields = ['id', 'first_name', 'last_name', 'email', 'full_name', 'role']
+        model = Staff
+        fields = ['id', 'first_name', 'last_name', 'email', 'full_name', 'staff_id', 'teacher_code', 'specialization']
     
     def get_full_name(self, obj):
-        return f"{obj.first_name} {obj.last_name}".strip()
+        return obj.full_name

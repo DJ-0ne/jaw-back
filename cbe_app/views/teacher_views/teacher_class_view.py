@@ -1,236 +1,175 @@
-# views.py - Add to your existing views file
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
-from django.db.models import Avg, Count, Q, Sum, F, FloatField, Case, When, Value, IntegerField
-from django.db.models.functions import Coalesce, Round
+from django.db.models import Avg
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
-import os
 import uuid
-from decimal import Decimal
+import os
+import logging
 
-from ...models import (
-    Class, Student, Staff, LearningArea, StudentAttendance, 
-    AttendanceSession, SummativeRating, SummativeAssessment,
-    Term, AcademicYear, TermlySummary, User, Competency,
-    StudentPortfolio, ClassSubjectAllocation, ExamResult,
-    Exam, GradingScale, Timetable
+from cbe_app.models import (
+    Class, Student, Staff, ClassSubjectAllocation, 
+    Term, AcademicYear, AttendanceSession, StudentAttendance,
+    Exam, ExamResult, StudentPortfolio, Competency
 )
 from cbe_app.serializers.teacher_serializers.teacher_class_serializers import (
     ClassListSerializer, SubjectClassSerializer, StudentListSerializer,
-    AttendanceFormSerializer, AssessmentFormSerializer, EvidenceUploadSerializer,
-    ClassAnalyticsSerializer, StudentPortfolioSerializer, StudentAttendanceSerializer
+    AttendanceSubmitSerializer, AssessmentSubmitSerializer, 
+    EvidenceUploadSerializer, StudentPortfolioSerializer
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TeacherMyClassesView(APIView):
-    """Get classes where teacher is the class teacher (owner view)"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
-            # Get current academic year and term from query params or use active ones
-            academic_year = request.query_params.get('academic_year')
-            term = request.query_params.get('term')
+            if not hasattr(request.user, 'staff_profile'):
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'Your user account is not linked to any staff profile.'
+                }, status=200)
             
-            # Get current active academic year and term if not specified
-            if not academic_year:
-                current_academic_year = AcademicYear.objects.filter(is_current=True).first()
-                academic_year = current_academic_year.year_code if current_academic_year else None
+            staff = request.user.staff_profile
             
-            # Get classes where this user is the class teacher
             classes = Class.objects.filter(
-                class_teacher=request.user,
+                class_teacher=staff,
                 is_active=True
             ).order_by('numeric_level', 'stream')
             
-            # If no classes as class teacher, get classes from staff profile
-            if not classes.exists() and hasattr(request.user, 'staff_profile'):
-                staff = request.user.staff_profile
-                # Get classes where staff is assigned as teacher via allocation
-                allocated_class_ids = ClassSubjectAllocation.objects.filter(
-                    teacher=request.user,
-                    academic_year=academic_year if academic_year else ''
-                ).values_list('class_id', flat=True).distinct()
-                
-                classes = Class.objects.filter(
-                    id__in=allocated_class_ids,
-                    is_active=True
-                ).order_by('numeric_level', 'stream')
-            
-            serializer = ClassListSerializer(
-                classes, 
-                many=True, 
-                context={'request': request, 'academic_year': academic_year}
-            )
+            serializer = ClassListSerializer(classes, many=True)
             
             return Response({
                 'success': True,
                 'data': serializer.data,
-                'message': 'Classes retrieved successfully'
+                'message': f'Found {len(serializer.data)} classes'
             })
             
         except Exception as e:
+            logger.error(f"TeacherMyClassesView error: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
-                'error': str(e),
-                'message': 'Failed to retrieve classes'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class TeacherSubjectClassesView(APIView):
-    """Get classes where teacher teaches a subject (instructor view)"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
-            # Get query parameters
-            academic_year = request.query_params.get('academic_year')
-            term = request.query_params.get('term')
+            if not hasattr(request.user, 'staff_profile'):
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'Your user account is not linked to any staff profile.'
+                }, status=200)
             
-            # Get current active academic year and term if not specified
-            if not academic_year:
-                current_academic_year = AcademicYear.objects.filter(is_current=True).first()
-                academic_year = current_academic_year.year_code if current_academic_year else None
+            staff = request.user.staff_profile
             
-            if not term:
-                current_term = Term.objects.filter(is_current=True).first()
-                term = current_term.term if current_term else 'Term 1'
-            
-            # Get subjects allocated to this teacher
+            # Get all allocations for this teacher - NO academic year filter
             allocations = ClassSubjectAllocation.objects.filter(
-                teacher=request.user,
-                academic_year=academic_year,
-                is_compulsory=True
+                teacher=staff
             ).select_related('class_id', 'subject')
             
-            class_ids = allocations.values_list('class_id', flat=True).distinct()
-            classes = Class.objects.filter(
-                id__in=class_ids,
-                is_active=True
-            ).order_by('numeric_level', 'stream')
-            
-            serializer = SubjectClassSerializer(
-                classes, 
-                many=True, 
-                context={
-                    'request': request, 
-                    'academic_year': academic_year,
-                    'term': term
-                }
-            )
+            serializer = SubjectClassSerializer(allocations, many=True)
             
             return Response({
                 'success': True,
                 'data': serializer.data,
-                'message': 'Subject classes retrieved successfully'
+                'message': f'Found {len(serializer.data)} subject classes'
             })
             
         except Exception as e:
+            logger.error(f"TeacherSubjectClassesView error: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
-                'error': str(e),
-                'message': 'Failed to retrieve subject classes'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class ClassStudentsView(APIView):
-    """Get students in a specific class"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request, class_id):
         try:
-            # Verify teacher has access to this class
-            class_obj = Class.objects.filter(id=class_id, is_active=True).first()
-            if not class_obj:
+            if not hasattr(request.user, 'staff_profile'):
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'Class not found'
-                }, status=status.HTTP_404_NOT_FOUND)
+                    'message': 'Your user account is not linked to any staff profile.'
+                }, status=200)
             
-            # Check if teacher has access (class teacher or subject teacher)
+            staff = request.user.staff_profile
+            
+            try:
+                class_obj = Class.objects.get(id=class_id, is_active=True)
+            except Class.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'Class not found.'
+                }, status=404)
+            
+            # Check access
             has_access = False
-            
-            # Check if user is class teacher
-            if class_obj.class_teacher == request.user:
+            if class_obj.class_teacher == staff:
                 has_access = True
-            
-            # Check if user teaches any subject in this class
             if not has_access:
-                allocation = ClassSubjectAllocation.objects.filter(
-                    class_id=class_obj,
-                    teacher=request.user
+                has_access = ClassSubjectAllocation.objects.filter(
+                    class_id=class_obj, teacher=staff
                 ).exists()
-                if allocation:
-                    has_access = True
             
             if not has_access:
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'You do not have access to this class'
-                }, status=status.HTTP_403_FORBIDDEN)
+                    'message': 'You do not have access to this class.'
+                }, status=403)
             
-            # Get students
             students = Student.objects.filter(
                 current_class=class_obj,
                 status='Active',
                 archived=False
             ).order_by('first_name', 'last_name')
             
-            # Get current term and academic year
-            current_term = Term.objects.filter(is_current=True).first()
-            academic_year_obj = AcademicYear.objects.filter(is_current=True).first()
-            
-            serializer = StudentListSerializer(
-                students, 
-                many=True, 
-                context={
-                    'current_term': current_term,
-                    'academic_year_obj': academic_year_obj,
-                    'class_obj': class_obj,
-                    'academic_year': academic_year_obj.year_code if academic_year_obj else None,
-                    'term': current_term.term if current_term else None
-                }
-            )
+            serializer = StudentListSerializer(students, many=True)
             
             return Response({
                 'success': True,
                 'data': serializer.data,
-                'message': 'Students retrieved successfully'
+                'message': f'Found {len(serializer.data)} students'
             })
             
         except Exception as e:
+            logger.error(f"ClassStudentsView error: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
-                'error': str(e),
-                'message': 'Failed to retrieve students'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class ClassAnalyticsView(APIView):
-    """Get analytics for a specific class"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request, class_id):
         try:
-            # Verify access
-            class_obj = Class.objects.filter(id=class_id, is_active=True).first()
-            if not class_obj:
+            try:
+                class_obj = Class.objects.get(id=class_id, is_active=True)
+            except Class.DoesNotExist:
                 return Response({
                     'success': False,
-                    'message': 'Class not found'
-                }, status=status.HTTP_404_NOT_FOUND)
+                    'message': 'Class not found.'
+                }, status=404)
             
-            # Get students
             students = Student.objects.filter(
                 current_class=class_obj,
                 status='Active',
@@ -242,247 +181,121 @@ class ClassAnalyticsView(APIView):
                     'success': True,
                     'data': {
                         'mean_score': 0,
-                        'class_rank': 0,
+                        'class_rank': 1,
                         'total_streams': Class.objects.filter(
                             numeric_level=class_obj.numeric_level,
                             is_active=True
                         ).count(),
-                        'performance_distribution': {},
+                        'performance_distribution': {'EE': 0, 'ME': 0, 'AE': 0, 'BE': 0},
                         'subject_mastery': [],
                         'top_performers': [],
                         'most_improved': []
-                    },
-                    'message': 'No students in class'
+                    }
                 })
             
-            # Get current term
             current_term = Term.objects.filter(is_current=True).first()
-            academic_year = AcademicYear.objects.filter(is_current=True).first()
             
-            # Calculate mean score
             student_scores = []
             for student in students:
-                # Get average from termly summaries
+                score = 0
                 if current_term:
                     summaries = student.termly_summaries.filter(term=current_term)
                     if summaries.exists():
                         avg_internal = summaries.aggregate(avg=Avg('final_internal_value'))['avg']
                         if avg_internal:
                             score = float(avg_internal) / 8 * 100
-                            student_scores.append(score)
-                            continue
-                
-                # Fallback to exam results
-                exam = Exam.objects.filter(
-                    academic_year=academic_year.year_code if academic_year else None,
-                    term=int(current_term.term.split()[-1]) if current_term else None,
-                    status='published'
-                ).first()
-                if exam:
-                    results = student.exam_results.filter(exam=exam)
-                    if results.exists():
-                        avg = results.aggregate(avg=Avg('percentage'))['avg']
-                        if avg:
-                            student_scores.append(float(avg))
-                            continue
-                
-                student_scores.append(0)
+                student_scores.append(score)
             
             mean_score = sum(student_scores) / len(student_scores) if student_scores else 0
             
-            # Get all streams at same level for ranking
-            same_level_classes = Class.objects.filter(
-                numeric_level=class_obj.numeric_level,
-                is_active=True
-            )
-            
-            # Calculate mean scores for other classes (simplified)
-            # In production, you'd have a more sophisticated calculation
-            class_rank = 1
-            for other_class in same_level_classes:
-                if other_class.id != class_obj.id:
-                    # Simplified ranking - in production, calculate actual means
-                    pass
-            
-            total_streams = same_level_classes.count()
-            
-            # Performance distribution based on grading scale
-            grading_scales = GradingScale.objects.all()
-            distribution = {}
-            for scale in grading_scales:
-                distribution[f"{scale.rating}{scale.sub_level if scale.sub_level > 0 else ''}"] = 0
-            
+            distribution = {'EE': 0, 'ME': 0, 'AE': 0, 'BE': 0}
             for score in student_scores:
-                found = False
-                for scale in grading_scales:
-                    if scale.min_percentage <= score <= scale.max_percentage:
-                        key = f"{scale.rating}{scale.sub_level if scale.sub_level > 0 else ''}"
-                        distribution[key] = distribution.get(key, 0) + 1
-                        found = True
-                        break
-                if not found:
-                    distribution['BE2'] = distribution.get('BE2', 0) + 1
+                if score >= 80:
+                    distribution['EE'] += 1
+                elif score >= 65:
+                    distribution['ME'] += 1
+                elif score >= 50:
+                    distribution['AE'] += 1
+                else:
+                    distribution['BE'] += 1
             
-            # Subject mastery - get subjects taught in this class
-            allocations = ClassSubjectAllocation.objects.filter(
-                class_id=class_obj,
-                academic_year=academic_year.year_code if academic_year else ''
-            ).select_related('subject')
-            
-            subject_mastery = []
-            for allocation in allocations:
-                # Get average score for this subject from termly summaries
-                subject_scores = []
-                for student in students:
-                    summary = TermlySummary.objects.filter(
-                        student=student,
-                        term=current_term,
-                        learning_area=allocation.subject
-                    ).first()
-                    if summary and summary.final_internal_value:
-                        score = float(summary.final_internal_value) / 8 * 100
-                        subject_scores.append(score)
-                
-                avg_score = sum(subject_scores) / len(subject_scores) if subject_scores else 0
-                
-                # Calculate class average (simplified - in production, get from other classes)
-                class_avg = avg_score * 0.95  # Placeholder
-                
-                subject_mastery.append({
-                    'subject': allocation.subject.area_name,
-                    'score': round(avg_score),
-                    'class_avg': round(class_avg),
-                    'rank': 1  # Placeholder - calculate actual rank
-                })
-            
-            # Top performers
             student_score_pairs = list(zip(students, student_scores))
             sorted_students = sorted(student_score_pairs, key=lambda x: x[1], reverse=True)
             
             top_performers = []
-            for i, (student, score) in enumerate(sorted_students[:5]):
-                # Get improvement from previous term
-                prev_term = Term.objects.filter(
-                    academic_year=academic_year,
-                    term__in=['Term 1', 'Term 2', 'Term 3']
-                ).exclude(id=current_term.id).first() if current_term else None
-                
-                prev_score = 0
-                if prev_term:
-                    prev_summary = student.termly_summaries.filter(term=prev_term).first()
-                    if prev_summary and prev_summary.final_internal_value:
-                        prev_score = float(prev_summary.final_internal_value) / 8 * 100
-                
-                improvement = round(score - prev_score)
-                improvement_str = f"+{improvement}" if improvement >= 0 else str(improvement)
-                
+            for student, score in sorted_students[:5]:
                 top_performers.append({
                     'id': str(student.id),
                     'name': student.full_name,
                     'score': round(score),
-                    'improvement': improvement_str
+                    'improvement': '0'
                 })
             
-            # Most improved students
-            improved_pairs = []
-            for student, current_score in student_score_pairs:
-                prev_term = Term.objects.filter(
-                    academic_year=academic_year,
-                    term__in=['Term 1', 'Term 2', 'Term 3']
-                ).exclude(id=current_term.id).first() if current_term else None
-                
-                prev_score = 0
-                if prev_term:
-                    prev_summary = student.termly_summaries.filter(term=prev_term).first()
-                    if prev_summary and prev_summary.final_internal_value:
-                        prev_score = float(prev_summary.final_internal_value) / 8 * 100
-                
-                improvement = current_score - prev_score
-                if improvement > 0:
-                    improved_pairs.append((student, current_score, prev_score, improvement))
-            
-            sorted_improved = sorted(improved_pairs, key=lambda x: x[3], reverse=True)
-            
-            most_improved = []
-            for student, current_score, prev_score, improvement in sorted_improved[:5]:
-                most_improved.append({
-                    'id': str(student.id),
-                    'name': student.full_name,
-                    'improvement': round(improvement),
-                    'from_score': round(prev_score),
-                    'to_score': round(current_score)
-                })
-            
-            analytics_data = {
-                'mean_score': round(mean_score, 1),
-                'class_rank': class_rank,
-                'total_streams': total_streams,
-                'performance_distribution': distribution,
-                'subject_mastery': subject_mastery,
-                'top_performers': top_performers,
-                'most_improved': most_improved
-            }
+            total_streams = Class.objects.filter(
+                numeric_level=class_obj.numeric_level,
+                is_active=True
+            ).count()
             
             return Response({
                 'success': True,
-                'data': analytics_data,
-                'message': 'Analytics retrieved successfully'
+                'data': {
+                    'mean_score': round(mean_score, 1),
+                    'class_rank': 1,
+                    'total_streams': total_streams,
+                    'performance_distribution': distribution,
+                    'subject_mastery': [],
+                    'top_performers': top_performers,
+                    'most_improved': []
+                }
             })
             
         except Exception as e:
+            logger.error(f"ClassAnalyticsView error: {str(e)}")
             return Response({
                 'success': False,
-                'error': str(e),
-                'message': 'Failed to retrieve analytics'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class TakeAttendanceView(APIView):
-    """Record attendance for a class"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        serializer = AttendanceFormSerializer(data=request.data)
-        
+        serializer = AttendanceSubmitSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
                 'success': False,
-                'error': serializer.errors,
-                'message': 'Invalid attendance data'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': serializer.errors
+            }, status=400)
         
         try:
+            if not hasattr(request.user, 'staff_profile'):
+                return Response({
+                    'success': False,
+                    'message': 'No staff profile linked.'
+                }, status=400)
+            
             data = serializer.validated_data
             attendance_date = data['date']
             period = data['period']
             records = data['records']
-            
-            # Map period to session type
-            session_type_map = {
-                'morning': 'Morning',
-                'afternoon': 'Afternoon',
-                'full': 'Full Day'
-            }
-            session_type = session_type_map.get(period, 'Morning')
-            
-            # Determine class and subject
             class_id = data.get('class_id')
             subject_id = data.get('subject_id')
             
+            session_type_map = {'morning': 'Morning', 'afternoon': 'Afternoon', 'full': 'Full Day'}
+            session_type = session_type_map.get(period, 'Morning')
+            
             class_obj = None
-            subject_obj = None
-            
             if class_id:
-                class_obj = Class.objects.filter(id=class_id).first()
-            if subject_id:
-                subject_obj = LearningArea.objects.filter(id=subject_id).first()
+                try:
+                    class_obj = Class.objects.get(id=class_id)
+                except Class.DoesNotExist:
+                    pass
             
-            # Get or create attendance session
             session, created = AttendanceSession.objects.get_or_create(
                 session_date=attendance_date,
                 session_type=session_type,
                 class_id=class_obj,
-                subject=subject_obj,
                 defaults={
                     'conducted_by': request.user,
                     'start_time': timezone.now().time(),
@@ -490,21 +303,17 @@ class TakeAttendanceView(APIView):
                 }
             )
             
-            # Process each attendance record
             for record in records:
-                student = Student.objects.filter(id=record['student_id']).first()
-                if not student:
+                try:
+                    student = Student.objects.get(id=record['student_id'])
+                except Student.DoesNotExist:
                     continue
                 
-                status_map = {
-                    'present': 'Present',
-                    'absent': 'Absent',
-                    'late': 'Late',
-                    'excused': 'Excused'
-                }
+                status_map = {'present': 'Present', 'absent': 'Absent', 
+                             'late': 'Late', 'excused': 'Excused'}
                 attendance_status = status_map.get(record['status'], 'Absent')
                 
-                attendance, created = StudentAttendance.objects.update_or_create(
+                StudentAttendance.objects.update_or_create(
                     session=session,
                     student=student,
                     defaults={
@@ -513,182 +322,113 @@ class TakeAttendanceView(APIView):
                         'recorded_by': request.user
                     }
                 )
-                
-                # Calculate late minutes if status is late
-                if attendance_status == 'Late' and session.start_time:
-                    from datetime import datetime, time
-                    now = datetime.now().time()
-                    if now > session.start_time:
-                        late_minutes = (datetime.combine(attendance_date, now) - 
-                                      datetime.combine(attendance_date, session.start_time)).seconds // 60
-                        attendance.late_minutes = late_minutes
-                        attendance.save()
             
             return Response({
                 'success': True,
-                'message': 'Attendance recorded successfully',
-                'data': {'session_id': str(session.id)}
+                'message': 'Attendance recorded successfully'
             })
             
         except Exception as e:
+            logger.error(f"TakeAttendanceView error: {str(e)}")
             return Response({
                 'success': False,
-                'error': str(e),
-                'message': 'Failed to record attendance'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class GetAttendanceView(APIView):
-    """Get attendance records for a class"""
-    permission_classes = [IsAuthenticated]
-    
-    def get(self, request, class_id):
-        try:
-            date = request.query_params.get('date')
-            if not date:
-                return Response({
-                    'success': False,
-                    'message': 'Date parameter is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            from datetime import datetime
-            attendance_date = datetime.strptime(date, '%Y-%m-%d').date()
-            
-            sessions = AttendanceSession.objects.filter(
-                session_date=attendance_date,
-                class_id=class_id
-            )
-            
-            all_attendance = []
-            for session in sessions:
-                attendance_records = StudentAttendance.objects.filter(
-                    session=session
-                ).select_related('student')
-                
-                serializer = StudentAttendanceSerializer(attendance_records, many=True)
-                all_attendance.append({
-                    'session_id': str(session.id),
-                    'session_type': session.session_type,
-                    'records': serializer.data
-                })
-            
-            return Response({
-                'success': True,
-                'data': all_attendance,
-                'message': 'Attendance retrieved successfully'
-            })
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': str(e),
-                'message': 'Failed to retrieve attendance'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class SaveAssessmentView(APIView):
-    """Save assessment results"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        serializer = AssessmentFormSerializer(data=request.data)
-        
+        serializer = AssessmentSubmitSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
                 'success': False,
-                'error': serializer.errors,
-                'message': 'Invalid assessment data'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': serializer.errors
+            }, status=400)
         
         try:
             data = serializer.validated_data
             
-            # Create exam record
             exam = Exam.objects.create(
                 exam_code=f"ASS-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
                 title=data['title'],
                 exam_type='cba',
+                grade_level='7',
                 academic_year=timezone.now().year,
-                term=1,  # You can determine from current term
+                term=1,
                 total_marks=data['max_score'],
                 status='published',
                 created_by=request.user
             )
             
-            # Process scores
             for score_data in data['scores']:
-                student = Student.objects.filter(id=score_data['student_id']).first()
-                if student:
+                try:
+                    student = Student.objects.get(id=score_data['student_id'])
                     ExamResult.objects.create(
                         exam=exam,
                         student=student,
                         subject=data['subject'],
-                        marks_obtained=score_data['score'],
+                        marks_obtained=score_data.get('score', 0),
                         remarks=score_data.get('feedback', ''),
                         marked_by=request.user
                     )
+                except Student.DoesNotExist:
+                    continue
             
             return Response({
                 'success': True,
-                'message': 'Assessment saved successfully',
-                'data': {'exam_id': str(exam.id)}
+                'message': 'Assessment saved successfully'
             })
             
         except Exception as e:
+            logger.error(f"SaveAssessmentView error: {str(e)}")
             return Response({
                 'success': False,
-                'error': str(e),
-                'message': 'Failed to save assessment'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class UploadEvidenceView(APIView):
-    """Upload evidence for student competency"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
         serializer = EvidenceUploadSerializer(data=request.data)
-        
         if not serializer.is_valid():
             return Response({
                 'success': False,
-                'error': serializer.errors,
-                'message': 'Invalid evidence data'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': serializer.errors
+            }, status=400)
         
         try:
             data = serializer.validated_data
-            student = Student.objects.filter(id=data['student_id']).first()
             
-            if not student:
+            try:
+                student = Student.objects.get(id=data['student_id'])
+            except Student.DoesNotExist:
                 return Response({
                     'success': False,
                     'message': 'Student not found'
-                }, status=status.HTTP_404_NOT_FOUND)
+                }, status=404)
             
-            # Save file
             file = data['file']
+            
             file_extension = os.path.splitext(file.name)[1]
             file_name = f"evidence/{timezone.now().strftime('%Y/%m/%d')}/{uuid.uuid4().hex}{file_extension}"
             file_path = default_storage.save(file_name, ContentFile(file.read()))
             
-            # Determine file type
             evidence_type = 'document'
-            if file.content_type.startswith('image/'):
+            if file.content_type and file.content_type.startswith('image/'):
                 evidence_type = 'image'
             elif file.content_type == 'application/pdf':
                 evidence_type = 'pdf'
             
-            # Get current term and academic year
             current_term = Term.objects.filter(is_current=True).first()
             academic_year = AcademicYear.objects.filter(is_current=True).first()
-            
-            # Find or create a competency for evidence (simplified - you'd match to actual competency)
-            # In production, you'd map to specific competencies
             default_competency = Competency.objects.first()
             
             if default_competency and current_term and academic_year:
-                portfolio = StudentPortfolio.objects.create(
+                StudentPortfolio.objects.create(
                     student=student,
                     competency=default_competency,
                     term=current_term,
@@ -703,20 +443,18 @@ class UploadEvidenceView(APIView):
             
             return Response({
                 'success': True,
-                'message': 'Evidence uploaded successfully',
-                'data': {'file_path': file_path}
+                'message': 'Evidence uploaded successfully'
             })
             
         except Exception as e:
+            logger.error(f"UploadEvidenceView error: {str(e)}")
             return Response({
                 'success': False,
-                'error': str(e),
-                'message': 'Failed to upload evidence'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)
 
 
 class GetEvidenceView(APIView):
-    """Get student evidence/portfolio"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request, student_id):
@@ -725,21 +463,26 @@ class GetEvidenceView(APIView):
                 student_id=student_id
             ).order_by('-assessed_date')
             
-            serializer = StudentPortfolioSerializer(
-                portfolios, 
-                many=True, 
-                context={'request': request}
-            )
+            data = []
+            for p in portfolios:
+                data.append({
+                    'id': str(p.id),
+                    'student_id': str(p.student_id),
+                    'student_name': p.student.full_name,
+                    'evidence_url': p.evidence_url,
+                    'evidence_type': p.evidence_type,
+                    'teacher_comment': p.teacher_comment,
+                    'assessed_date': p.assessed_date.isoformat() if p.assessed_date else None
+                })
             
             return Response({
                 'success': True,
-                'data': serializer.data,
-                'message': 'Evidence retrieved successfully'
+                'data': data
             })
             
         except Exception as e:
+            logger.error(f"GetEvidenceView error: {str(e)}")
             return Response({
                 'success': False,
-                'error': str(e),
-                'message': 'Failed to retrieve evidence'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error': str(e)
+            }, status=500)

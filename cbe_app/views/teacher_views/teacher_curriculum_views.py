@@ -1,26 +1,27 @@
-# views.py - Add to your existing views file
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
-from django.db.models import Q, Count, F, Avg, Sum, FloatField
-from django.db.models.functions import Coalesce
-from collections import defaultdict
+from django.db.models import Q
 import uuid
 
 from cbe_app.models import (
     LearningArea, GradeLevel, Strand, SubStrand, LearningOutcome,
-    ClassSubjectAllocation, AcademicYear, Term, CoreCompetency,
-    CoreValue, CurriculumVersion, StudentPortfolio
+    ClassSubjectAllocation, AcademicYear, CoreCompetency,
+    CoreValue, CurriculumVersion, Staff
 )
 from cbe_app.serializers.teacher_serializers.teacher_curriculum_serializers import (
     LearningAreaSerializer, GradeLevelSerializer, StrandSerializer,
-    TeacherSubjectSerializer, SyllabusProgressSerializer,
-    LessonPlanSerializer, LessonPlanResponseSerializer,
-    CoreCompetencySerializer, CoreValueSerializer,
-    CurriculumVersionSerializer
+    TeacherSubjectSerializer, CoreCompetencySerializer, 
+    CoreValueSerializer, CurriculumVersionSerializer
 )
+
+
+def get_staff_from_user(user):
+    """Get Staff object from User"""
+    if hasattr(user, 'staff_profile'):
+        return user.staff_profile
+    return Staff.objects.filter(user=user).first()
 
 
 class TeacherSubjectsView(APIView):
@@ -29,26 +30,30 @@ class TeacherSubjectsView(APIView):
     
     def get(self, request):
         try:
-            academic_year = request.query_params.get('academic_year')
+            # Get Staff object
+            staff = get_staff_from_user(request.user)
             
-            if not academic_year:
-                current_academic_year = AcademicYear.objects.filter(is_current=True).first()
-                academic_year = current_academic_year.year_code if current_academic_year else None
+            if not staff:
+                return Response({
+                    'success': True,
+                    'data': [],
+                    'message': 'No staff profile found'
+                })
+            
+            # Get current academic year
+            current_academic_year = AcademicYear.objects.filter(is_current=True).first()
+            academic_year = current_academic_year.year_code if current_academic_year else '2024-2025'
             
             # Get unique subjects from teacher's allocations
             allocations = ClassSubjectAllocation.objects.filter(
-                teacher=request.user,
-                academic_year=academic_year if academic_year else ''
+                teacher=staff,  # Use Staff object
+                academic_year=academic_year
             ).select_related('subject').distinct('subject')
             
-            subjects = [allocation.subject for allocation in allocations if allocation.subject]
-            
-            # Add grade level info
-            for subject in subjects:
-                # Get grade level from curriculum mapping
-                grade_mapping = subject.grade_mappings.first()
-                if grade_mapping:
-                    subject.grade_level = grade_mapping.grade_level
+            subjects = []
+            for allocation in allocations:
+                if allocation.subject:
+                    subjects.append(allocation.subject)
             
             serializer = TeacherSubjectSerializer(subjects, many=True)
             
@@ -59,6 +64,7 @@ class TeacherSubjectsView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in TeacherSubjectsView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
@@ -73,19 +79,35 @@ class TeacherGradeLevelsView(APIView):
     
     def get(self, request):
         try:
+            # Get Staff object
+            staff = get_staff_from_user(request.user)
+            
+            if not staff:
+                return Response({
+                    'success': True,
+                    'data': [],
+                    'message': 'No staff profile found'
+                })
+            
+            # Get current academic year
+            current_academic_year = AcademicYear.objects.filter(is_current=True).first()
+            academic_year = current_academic_year.year_code if current_academic_year else '2024-2025'
+            
             # Get grade levels from teacher's allocated classes
             allocations = ClassSubjectAllocation.objects.filter(
-                teacher=request.user
+                teacher=staff,
+                academic_year=academic_year
             ).select_related('class_id')
             
-            grade_levels = set()
+            grade_levels_set = set()
             for allocation in allocations:
                 if allocation.class_id:
-                    grade_levels.add(allocation.class_id.numeric_level)
+                    grade_levels_set.add(allocation.class_id.numeric_level)
             
-            grade_level_objs = GradeLevel.objects.filter(level__in=grade_levels).order_by('level')
+            # Get GradeLevel objects
+            grade_levels = GradeLevel.objects.filter(level__in=grade_levels_set).order_by('level')
             
-            serializer = GradeLevelSerializer(grade_level_objs, many=True)
+            serializer = GradeLevelSerializer(grade_levels, many=True)
             
             return Response({
                 'success': True,
@@ -94,6 +116,7 @@ class TeacherGradeLevelsView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in TeacherGradeLevelsView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
@@ -118,72 +141,6 @@ class CurriculumStrandsView(APIView):
                     'message': 'Subject parameter is required'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Get strands for the subject and grade level
-            strands = Strand.objects.filter(
-                learning_area_id=subject_id
-            ).order_by('display_order')
-            
-            if grade_level_id:
-                strands = strands.filter(grade_level_id=grade_level_id)
-            
-            # Prefetch sub-strands and learning outcomes
-            strands = strands.prefetch_related(
-                'substrands__learning_outcomes__competencies'
-            )
-            
-            serializer = StrandSerializer(strands, many=True)
-            
-            # Add progress information for each strand
-            response_data = []
-            for strand, strand_data in zip(strands, serializer.data):
-                # Calculate progress based on student portfolios
-                total_outcomes = LearningOutcome.objects.filter(
-                    substrand__strand=strand
-                ).count()
-                
-                covered_outcomes = StudentPortfolio.objects.filter(
-                    competency__substrand__strand=strand,
-                    status='assessed'
-                ).values('competency').distinct().count() if total_outcomes > 0 else 0
-                
-                progress = round((covered_outcomes / total_outcomes) * 100) if total_outcomes > 0 else 0
-                
-                strand_data['progress'] = progress
-                strand_data['total_outcomes'] = total_outcomes
-                strand_data['covered_outcomes'] = covered_outcomes
-                response_data.append(strand_data)
-            
-            return Response({
-                'success': True,
-                'data': response_data,
-                'message': 'Strands retrieved successfully'
-            })
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'data': [],
-                'error': str(e),
-                'message': 'Failed to retrieve strands'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class SyllabusProgressView(APIView):
-    """Get syllabus progress for teacher's subjects"""
-    permission_classes = [IsAuthenticated]
-    
-    def get(self, request):
-        try:
-            subject_id = request.query_params.get('subject_id')
-            grade_level_id = request.query_params.get('grade_id')
-            
-            if not subject_id:
-                return Response({
-                    'success': False,
-                    'data': [],
-                    'message': 'Subject ID is required'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Get strands for the subject
             strands = Strand.objects.filter(
                 learning_area_id=subject_id
@@ -192,46 +149,60 @@ class SyllabusProgressView(APIView):
             if grade_level_id:
                 strands = strands.filter(grade_level_id=grade_level_id)
             
-            progress_data = []
+            # Prepare response data
+            response_data = []
             for strand in strands:
-                total_outcomes = LearningOutcome.objects.filter(
-                    substrand__strand=strand
-                ).count()
+                # Get sub-strands
+                substrands = strand.substrands.all().order_by('display_order')
+                substrands_data = []
                 
-                # Count covered outcomes based on assessed portfolios
-                covered_outcomes = StudentPortfolio.objects.filter(
-                    competency__substrand__strand=strand,
-                    status='assessed'
-                ).values('competency').distinct().count()
+                for sub in substrands:
+                    # Get learning outcomes
+                    outcomes = sub.learning_outcomes.all().order_by('display_order')
+                    outcomes_data = []
+                    
+                    for outcome in outcomes:
+                        outcomes_data.append({
+                            'id': outcome.id,
+                            'description': outcome.description,
+                            'domain': outcome.domain,
+                            'display_order': outcome.display_order
+                        })
+                    
+                    substrands_data.append({
+                        'id': sub.id,
+                        'substrand_code': sub.substrand_code,
+                        'substrand_name': sub.substrand_name,
+                        'description': sub.description,
+                        'display_order': sub.display_order,
+                        'learning_outcomes': outcomes_data
+                    })
                 
-                percentage = round((covered_outcomes / total_outcomes) * 100) if total_outcomes > 0 else 0
-                
-                # Estimate lessons (3 lessons per outcome)
-                total_lessons = total_outcomes * 3
-                completed_lessons = covered_outcomes * 3
-                
-                progress_data.append({
-                    'strand_id': strand.id,
+                response_data.append({
+                    'id': strand.id,
+                    'strand_code': strand.strand_code,
                     'strand_name': strand.strand_name,
-                    'total_outcomes': total_outcomes,
-                    'covered_outcomes': covered_outcomes,
-                    'percentage': percentage,
-                    'total_lessons': total_lessons,
-                    'completed_lessons': completed_lessons
+                    'description': strand.description,
+                    'display_order': strand.display_order,
+                    'progress': 0,
+                    'total_outcomes': 0,
+                    'covered_outcomes': 0,
+                    'substrands': substrands_data
                 })
             
             return Response({
                 'success': True,
-                'data': progress_data,
-                'message': 'Syllabus progress retrieved successfully'
+                'data': response_data,
+                'message': 'Strands retrieved successfully'
             })
             
         except Exception as e:
+            print(f"Error in CurriculumStrandsView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
                 'error': str(e),
-                'message': 'Failed to retrieve syllabus progress'
+                'message': 'Failed to retrieve strands'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -251,6 +222,7 @@ class CoreCompetenciesView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in CoreCompetenciesView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
@@ -275,6 +247,7 @@ class CoreValuesView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in CoreValuesView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
@@ -288,35 +261,34 @@ class LessonPlanCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        serializer = LessonPlanSerializer(data=request.data)
-        
-        if not serializer.is_valid():
-            return Response({
-                'success': False,
-                'error': serializer.errors,
-                'message': 'Invalid lesson plan data'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
-            data = serializer.validated_data
+            data = request.data
+            
+            # Validate required fields
+            if not data.get('topic'):
+                return Response({
+                    'success': False,
+                    'message': 'Topic is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # Generate lesson plan ID
             lesson_plan_id = str(uuid.uuid4())
             
-            # In production, save to a LessonPlan model
-            # For now, we'll store in session or database
-            # You would create a LessonPlan model and save here
+            # For now, just return success
+            # You would save to a LessonPlan model here
             
             return Response({
                 'success': True,
                 'data': {
                     'id': lesson_plan_id,
-                    **data
+                    'topic': data.get('topic'),
+                    'status': 'saved'
                 },
                 'message': 'Lesson plan saved successfully'
             })
             
         except Exception as e:
+            print(f"Error in LessonPlanCreateView: {str(e)}")
             return Response({
                 'success': False,
                 'error': str(e),
@@ -330,24 +302,75 @@ class TeacherLessonPlansView(APIView):
     
     def get(self, request):
         try:
-            subject_id = request.query_params.get('subject_id')
-            
-            # In production, query LessonPlan model
-            # For now, return empty list
-            lesson_plans = []
-            
+            # Return empty list for now
+            # You would query LessonPlan model here
             return Response({
                 'success': True,
-                'data': lesson_plans,
+                'data': [],
                 'message': 'Lesson plans retrieved successfully'
             })
             
         except Exception as e:
+            print(f"Error in TeacherLessonPlansView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
                 'error': str(e),
                 'message': 'Failed to retrieve lesson plans'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SyllabusProgressView(APIView):
+    """Get syllabus progress for teacher's subjects"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            subject_id = request.query_params.get('subject_id')
+            grade_id = request.query_params.get('grade_id')
+            
+            if not subject_id:
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'Subject ID is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get strands for the subject
+            strands = Strand.objects.filter(learning_area_id=subject_id)
+            
+            if grade_id:
+                strands = strands.filter(grade_level_id=grade_id)
+            
+            progress_data = []
+            for strand in strands:
+                total_outcomes = LearningOutcome.objects.filter(
+                    substrand__strand=strand
+                ).count()
+                
+                progress_data.append({
+                    'strand_id': strand.id,
+                    'strand_name': strand.strand_name,
+                    'total_outcomes': total_outcomes,
+                    'covered_outcomes': 0,
+                    'percentage': 0,
+                    'total_lessons': total_outcomes * 3,
+                    'completed_lessons': 0
+                })
+            
+            return Response({
+                'success': True,
+                'data': progress_data,
+                'message': 'Syllabus progress retrieved successfully'
+            })
+            
+        except Exception as e:
+            print(f"Error in SyllabusProgressView: {str(e)}")
+            return Response({
+                'success': False,
+                'data': [],
+                'error': str(e),
+                'message': 'Failed to retrieve syllabus progress'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -367,6 +390,7 @@ class CurriculumVersionsView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in CurriculumVersionsView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],

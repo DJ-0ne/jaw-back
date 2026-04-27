@@ -735,7 +735,7 @@ class Class(BaseModel):
     numeric_level = models.IntegerField()
     stream = models.CharField(max_length=20, blank=True, null=True)
     capacity = models.IntegerField(default=40, validators=[MinValueValidator(1)])
-    class_teacher = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='classes_taught')
+    class_teacher = models.ForeignKey('Staff', on_delete=models.SET_NULL, null=True, blank=True, related_name='classes_taught')
     is_active = models.BooleanField(default=True)
     
     class Meta:
@@ -747,19 +747,7 @@ class Class(BaseModel):
     def __str__(self):
         return f"{self.class_name} ({self.class_code})"
 
-class ClassSubjectAllocation(BaseModel):
-    academic_year = models.CharField(max_length=9)
-    class_id = models.ForeignKey(Class, on_delete=models.CASCADE)
-    subject = models.ForeignKey(LearningArea, on_delete=models.CASCADE)
-    teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='allocated_subjects')
-    periods_per_week = models.IntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(10)])
-    is_compulsory = models.BooleanField(default=True)
-    
-    class Meta:
-        unique_together = ['academic_year', 'class_id', 'subject']
-        indexes = [
-            models.Index(fields=['teacher']),
-        ]
+
 
 # ==================== E-LEARNING MODELS ====================
 class Course(BaseModel):
@@ -1775,6 +1763,40 @@ class Staff(BaseModel):
         return f"{self.first_name} {self.middle_name + ' ' if self.middle_name else ''}{self.last_name}"
     
     def save(self, *args, **kwargs):
+        # ========== AUTO-CREATE USER ACCOUNT FOR STAFF ==========
+        if not self.user and self.personal_email:
+            # Try to find existing user by email
+            existing_user = User.objects.filter(email=self.personal_email).first()
+            
+            if existing_user:
+                # Link to existing user
+                self.user = existing_user
+            else:
+                # Create a new user account
+                username = self.personal_email.split('@')[0]
+                base_username = username
+                counter = 1
+                
+                # Ensure username is unique
+                while User.objects.filter(username=username).exists():
+                    username = f"{base_username}{counter}"
+                    counter += 1
+                
+                # Create the user
+                user = User.objects.create(
+                    username=username,
+                    email=self.personal_email,
+                    first_name=self.first_name,
+                    last_name=self.last_name,
+                    role='teacher',
+                    is_active=True
+                )
+                # Set a default password (user must change on first login)
+                user.set_password('staff@123')
+                user.save()
+                
+                self.user = user
+        
         # Auto-generate teacher_code based on category
         if not self.teacher_code and self.teacher_category:
             prefix = self.teacher_category.code  # PP, EP, or JSS
@@ -3209,3 +3231,18 @@ class ExamResult(BaseModel):
     
     def __str__(self):
         return f"{self.exam.exam_code} - {self.student.admission_no} - {self.subject}: {self.marks_obtained}"
+    
+    
+class ClassSubjectAllocation(BaseModel):
+    academic_year = models.CharField(max_length=9)
+    class_id = models.ForeignKey(Class, on_delete=models.CASCADE)
+    subject = models.ForeignKey(LearningArea, on_delete=models.CASCADE)
+    teacher = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='allocated_subjects')
+    periods_per_week = models.IntegerField(default=5, validators=[MinValueValidator(1), MaxValueValidator(10)])
+    is_compulsory = models.BooleanField(default=True)
+    
+    class Meta:
+        unique_together = ['academic_year', 'class_id', 'subject']
+        indexes = [
+            models.Index(fields=['teacher']),
+        ]

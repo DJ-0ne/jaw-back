@@ -12,43 +12,44 @@ from cbe_app.models import (
     GradeLevel
 )
 from cbe_app.serializers.school_deputyadmin_seriliazers.teacher_assignment_serializers import (
-    TeacherProfileSerializer, ClassWithStreamSerializer, SubjectSerializer,
+    TeacherCategorySerializer, TeacherProfileSerializer, ClassWithStreamSerializer, SubjectSerializer,
     TeacherAssignmentSerializer, CreateAssignmentSerializer
 )
 
 
 class QualifiedTeachersView(APIView):
-    """Get qualified teachers with specialization and department info"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
             grade_level = request.query_params.get('grade_level')
             
-            # Get only staff who are actual teachers (have teacher_category)
-            teachers = Staff.objects.filter(
-                status='Active',
-                teacher_category__isnull=False
-            ).exclude(
-                teacher_category__code__in=['ADMIN', 'HR', 'SUPPORT', 'FINANCE']
-            ).select_related(
+            # Get all staff - NO filters that exclude data
+            teachers = Staff.objects.filter(status='Active').select_related(
                 'user', 'teacher_category', 'jss_department', 'admin_department'
             ).order_by('first_name', 'last_name')
             
-            # Filter by grade level qualification
-            if grade_level:
-                if grade_level == 'early':
-                    teachers = teachers.filter(teacher_category__code='PP')
-                elif grade_level == 'primary':
-                    teachers = teachers.filter(teacher_category__code__in=['EP', 'PP'])
-                elif grade_level == 'junior':
-                    teachers = teachers.filter(teacher_category__code='JSS')
-            
-            serializer = TeacherProfileSerializer(teachers, many=True)
+            teacher_data = []
+            for teacher in teachers:
+                teacher_data.append({
+                    'id': str(teacher.id),
+                    'user_id': str(teacher.user.id) if teacher.user else None,
+                    'staff_id': teacher.staff_id,
+                    'teacher_code': teacher.teacher_code,
+                    'full_name': teacher.full_name,
+                    'first_name': teacher.first_name,
+                    'last_name': teacher.last_name,
+                    'teacher_category_name': teacher.teacher_category.name if teacher.teacher_category else 'N/A',
+                    'teacher_category_code': teacher.teacher_category.code if teacher.teacher_category else None,
+                    'specialization': teacher.specialization or 'Not specified',
+                    'highest_qualification': teacher.highest_qualification or 'Not specified',
+                    'status': teacher.status,
+                    'has_user': teacher.user is not None  # Important: Check if teacher has user account
+                })
             
             return Response({
                 'success': True,
-                'data': serializer.data,
+                'data': teacher_data,
                 'message': 'Teachers retrieved successfully'
             })
             
@@ -175,59 +176,89 @@ class TeacherDepartmentsView(APIView):
                 'message': 'Failed to retrieve departments'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-
 class CreateTeacherAssignmentView(APIView):
-    """Create a new teacher-class-subject assignment"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        # Validate input using serializer
-        serializer = CreateAssignmentSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({
-                'success': False,
-                'error': serializer.errors,
-                'message': 'Invalid assignment data'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
-            data = serializer.validated_data
+            data = request.data
             
-            # Get the staff member (teacher)
-            staff = Staff.objects.get(id=data['teacher_id'])
+            class_id = data.get('class_id')
+            subject_id = data.get('subject_id')
+            teacher_staff_id = data.get('teacher_id')
+            academic_year = data.get('academic_year')
+            periods_per_week = data.get('periods_per_week', 5)
+            is_compulsory = data.get('is_compulsory', True)
             
-            # Create assignment using the teacher's user account
+            # Validate required fields
+            if not class_id:
+                return Response({'success': False, 'message': 'class_id is required'}, status=400)
+            if not subject_id:
+                return Response({'success': False, 'message': 'subject_id is required'}, status=400)
+            if not teacher_staff_id:
+                return Response({'success': False, 'message': 'teacher_id is required'}, status=400)
+            
+            # Get the related objects
+            try:
+                class_obj = Class.objects.get(id=class_id, is_active=True)
+            except Class.DoesNotExist:
+                return Response({'success': False, 'message': 'Class not found'}, status=404)
+            
+            try:
+                subject_obj = LearningArea.objects.get(id=subject_id, is_active=True)
+            except LearningArea.DoesNotExist:
+                return Response({'success': False, 'message': 'Subject not found'}, status=404)
+            
+            try:
+                staff = Staff.objects.get(id=teacher_staff_id, status='Active')
+            except Staff.DoesNotExist:
+                return Response({'success': False, 'message': 'Teacher not found'}, status=404)
+            
+            # Check for existing assignment
+            existing = ClassSubjectAllocation.objects.filter(
+                class_id=class_obj,
+                subject=subject_obj,
+                academic_year=academic_year
+            ).first()
+            
+            if existing:
+                return Response({'success': False, 'message': f'Subject already assigned to this class for {academic_year}'}, status=400)
+            
+            # Create assignment - CORRECT WAY
             assignment = ClassSubjectAllocation.objects.create(
-                class_id_id=data['class_id'],
-                subject_id=data['subject_id'],
-                teacher=staff.user,
-                academic_year=data['academic_year'],
-                periods_per_week=data['periods_per_week'],
-                is_compulsory=data['is_compulsory']
+                class_id=class_obj,  # Pass the Class object directly
+                subject=subject_obj,  # Pass the LearningArea object directly
+                teacher=staff,  # Pass the Staff object
+                academic_year=academic_year,
+                periods_per_week=periods_per_week,
+                is_compulsory=is_compulsory
             )
-            
-            # Return the created assignment with full details
-            response_serializer = TeacherAssignmentSerializer(assignment)
             
             return Response({
                 'success': True,
-                'data': response_serializer.data,
+                'data': {
+                    'id': str(assignment.id),
+                    'class_id': str(assignment.class_id.id),
+                    'class_name': assignment.class_id.class_name,
+                    'subject_id': str(assignment.subject.id),
+                    'subject_name': assignment.subject.area_name,
+                    'teacher_id': str(staff.id),
+                    'teacher_name': staff.full_name,
+                    'periods_per_week': assignment.periods_per_week,
+                    'is_compulsory': assignment.is_compulsory,
+                    'academic_year': assignment.academic_year
+                },
                 'message': 'Teacher assigned successfully'
             })
             
-        except Staff.DoesNotExist:
-            return Response({
-                'success': False,
-                'message': 'Teacher not found'
-            }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            print(f"Error: {str(e)}")
             return Response({
-                'success': False,
-                'error': str(e),
+                'success': False, 
+                'error': str(e), 
                 'message': 'Failed to create assignment'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+            }, status=500)
+            
 class TeacherAssignmentsListView(APIView):
     """Get all teacher assignments with filters"""
     permission_classes = [IsAuthenticated]
@@ -242,9 +273,10 @@ class TeacherAssignmentsListView(APIView):
                 current_academic_year = AcademicYear.objects.filter(is_current=True).first()
                 academic_year = current_academic_year.year_code if current_academic_year else None
             
+            # FIXED: Select related correctly
             assignments = ClassSubjectAllocation.objects.filter(
                 academic_year=academic_year if academic_year else ''
-            ).select_related('class_id', 'subject', 'teacher__staff_profile')
+            ).select_related('class_id', 'subject', 'teacher')  # 'teacher' directly, not 'teacher__staff_profile'
             
             # Filter by grade level
             if grade_level:
@@ -255,11 +287,11 @@ class TeacherAssignmentsListView(APIView):
                 elif grade_level == 'junior':
                     assignments = assignments.filter(class_id__numeric_level__in=[9, 10, 11])
             
-            # Filter by department
+            # Filter by department (using the Staff's department fields)
             if department_id:
                 assignments = assignments.filter(
-                    Q(teacher__staff_profile__admin_department_id=department_id) |
-                    Q(teacher__staff_profile__jss_department_id=department_id)
+                    Q(teacher__admin_department_id=department_id) |
+                    Q(teacher__jss_department_id=department_id)
                 )
             
             serializer = TeacherAssignmentSerializer(assignments, many=True)
@@ -271,13 +303,13 @@ class TeacherAssignmentsListView(APIView):
             })
             
         except Exception as e:
+            print(f"Error in TeacherAssignmentsListView: {str(e)}")
             return Response({
                 'success': False,
                 'data': [],
                 'error': str(e),
                 'message': 'Failed to retrieve assignments'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class UpdateTeacherAssignmentView(APIView):
     """Update an existing teacher assignment"""
@@ -296,9 +328,14 @@ class UpdateTeacherAssignmentView(APIView):
             
             # Update teacher if provided
             if 'teacher_id' in data:
-                staff = Staff.objects.filter(id=data['teacher_id'], teacher_category__isnull=False).first()
-                if staff and staff.user:
-                    assignment.teacher = staff.user
+                staff = Staff.objects.filter(id=data['teacher_id'], status='Active').first()
+                if staff:
+                    assignment.teacher = staff  # Direct assignment - teacher is Staff
+                else:
+                    return Response({
+                        'success': False,
+                        'message': 'Teacher not found'
+                    }, status=status.HTTP_404_NOT_FOUND)
             
             # Update other fields
             if 'periods_per_week' in data:
@@ -312,6 +349,8 @@ class UpdateTeacherAssignmentView(APIView):
             
             assignment.save()
             
+            # Refresh from database to get updated relations
+            assignment.refresh_from_db()
             serializer = TeacherAssignmentSerializer(assignment)
             
             return Response({
@@ -321,6 +360,7 @@ class UpdateTeacherAssignmentView(APIView):
             })
             
         except Exception as e:
+            print(f"Error updating assignment: {str(e)}")
             return Response({
                 'success': False,
                 'error': str(e),

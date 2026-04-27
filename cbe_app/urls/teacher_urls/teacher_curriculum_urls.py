@@ -1,5 +1,3 @@
-# urls.py - Add to your main app urls.py
-
 from django.urls import path
 from cbe_app.views.teacher_views.teacher_curriculum_views import (
     TeacherSubjectsView,
@@ -14,7 +12,6 @@ from cbe_app.views.teacher_views.teacher_curriculum_views import (
 )
 
 urlpatterns = [
-    # Curriculum URLs (all under teacher/curriculum/)
     path('subjects/', TeacherSubjectsView.as_view(), name='teacher-curriculum-subjects'),
     path('grade-levels/', TeacherGradeLevelsView.as_view(), name='teacher-curriculum-grade-levels'),
     path('strands/', CurriculumStrandsView.as_view(), name='teacher-curriculum-strands'),

@@ -270,85 +270,44 @@ def login(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def logout(request):
-    """Logout user and invalidate session - FIXED VERSION"""
+    """Logout user and invalidate session - FIXED"""
     try:
-        # Get the access token from the request header
+        # Get tokens
         auth_header = request.headers.get('Authorization', '')
         access_token = auth_header.replace('Bearer ', '')
-        
-        # Get the refresh token from request body
         refresh_token = request.data.get('refresh_token')
         
-        if not access_token and not refresh_token:
-            return Response({'error': 'No token provided'}, status=status.HTTP_400_BAD_REQUEST)
+        # REVOKE ALL SESSIONS for this user 
+        sessions_revoked = UserSession.objects.filter(
+            user=request.user,
+            revoked=False
+        ).update(revoked=True)
         
-        # Find and revoke the session using either access or refresh token
-        session = None
-        
-        if refresh_token:
-            session = UserSession.objects.filter(
-                user=request.user,
-                refresh_token=refresh_token,
-                revoked=False
-            ).first()
-        
-        if not session and access_token:
-            session = UserSession.objects.filter(
-                user=request.user,
-                access_token=access_token,
-                revoked=False
-            ).first()
-        
-        if session:
-            # Revoke the session
-            session.revoked = True
-            session.save()
-            
-            # Blacklist the refresh token if it exists
+        # Blacklist refresh tokens if they exist
+        sessions = UserSession.objects.filter(user=request.user)
+        for session in sessions:
             if session.refresh_token:
                 try:
                     token = RefreshToken(session.refresh_token)
                     token.blacklist()
                 except Exception:
-                    pass
-            
-            # AUDIT: Logout successful (single session)
-            create_audit_log(
-                user=request.user,
-                event_type='USER_LOGOUT',
-                request=request,
-                table_name='UserSession',
-                operation='UPDATE',
-                new_values={'session_revoked': True},
-                success=True
-            )
-            
-            return Response({
-                'message': 'Logout successful',
-                'session_revoked': True
-            }, status=status.HTTP_200_OK)
-        else:
-            # If no specific session found, revoke all sessions for this user
-            sessions_revoked = UserSession.objects.filter(
-                user=request.user, 
-                revoked=False
-            ).update(revoked=True)
-            
-            # AUDIT: Logout successful (all sessions)
-            create_audit_log(
-                user=request.user,
-                event_type='USER_LOGOUT',
-                request=request,
-                table_name='UserSession',
-                operation='UPDATE',
-                new_values={'all_sessions_revoked': True, 'count': sessions_revoked},
-                success=True
-            )
-            
-            return Response({
-                'message': f'Logout successful. {sessions_revoked} session(s) revoked.',
-                'session_revoked': True
-            }, status=status.HTTP_200_OK)
+                    pass  
+        
+        # Audit log
+        create_audit_log(
+            user=request.user,
+            event_type='USER_LOGOUT',
+            request=request,
+            table_name='UserSession',
+            operation='UPDATE',
+            new_values={'all_sessions_revoked': True, 'count': sessions_revoked},
+            success=True
+        )
+        
+        return Response({
+            'success': True,
+            'message': f'Logout successful. {sessions_revoked} session(s) revoked.'
+        }, status=status.HTTP_200_OK)
         
     except Exception as e:
         logger.error(f"Logout error: {str(e)}")
