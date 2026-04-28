@@ -26,6 +26,7 @@ class ClassListSerializer(serializers.ModelSerializer):
 
 
 class SubjectClassSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source='class_id.id', read_only=True)
     class_id = serializers.UUIDField(source='class_id.id', read_only=True)
     class_name = serializers.CharField(source='class_id.class_name', read_only=True)
     class_code = serializers.CharField(source='class_id.class_code', read_only=True)
@@ -70,19 +71,25 @@ class StudentListSerializer(serializers.ModelSerializer):
     
     def get_attendance_rate(self, obj):
         current_term = Term.objects.filter(is_current=True).first()
-        if current_term:
-            sessions = AttendanceSession.objects.filter(
-                session_date__gte=current_term.start_date,
-                session_date__lte=current_term.end_date
-            )
-            total_sessions = sessions.count()
-            if total_sessions > 0:
-                present_count = obj.attendance_records.filter(
-                    session__in=sessions,
-                    attendance_status='Present'
-                ).count()
-                return round((present_count / total_sessions) * 100)
-        return 0
+        class_obj = self.context.get('class_obj')
+        if not current_term or not class_obj:
+            return 0
+        
+        sessions = AttendanceSession.objects.filter(
+            session_date__gte=current_term.start_date,
+            session_date__lte=current_term.end_date,
+            class_id=class_obj
+        )
+        total = sessions.count()
+        if total == 0:
+            return 0
+        
+        present = obj.attendance_records.filter(
+            session__in=sessions,
+            attendance_status='Present'
+        ).count()
+        
+        return round((present / total) * 100)
     
     def get_last_assessment(self, obj):
         last_result = obj.exam_results.order_by('-marked_at').first()

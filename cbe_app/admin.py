@@ -34,8 +34,8 @@ from .models import (
     CoreValue, WeightConfiguration,GradeLevel,
     
     # E-Learning
-    Course, CourseModule, LearningContent, StudentEnrollment, ContentProgress,
-    ELearningQuiz, QuizQuestion, QuizAttempt, DiscussionForum, ForumPost,
+    # Course, CourseModule, LearningContent, StudentEnrollment, ContentProgress,
+    # ELearningQuiz, QuizQuestion, QuizAttempt, DiscussionForum, ForumPost,
     
     # Finance
     FeeCategory, FeeStructure, StudentFeeInvoice, InvoiceItem, FeeTransaction,
@@ -47,15 +47,16 @@ from .models import (
     CounselingSession, Suspension, DisciplineReport,
     
     # Human Resources
-    Staff,  TeacherCategory, JSSDepartment, StaffLeave, LeaveBalance,
-    PayrollComponent, StaffPayrollComponent, PayrollPeriod, PayrollRecord,
-    StaffLoan, LoanRepayment,
+     Staff,  TeacherCategory, JSSDepartment, 
+    #  StaffLeave, LeaveBalance,
+    # PayrollComponent, StaffPayrollComponent, PayrollPeriod, PayrollRecord,
+    # StaffLoan, LoanRepayment,
     
     # Library
-    BookResource,
+    # BookResource,
     
     # Parent
-    Parent,
+    # Parent,
     
     # System & Audit
     AuditLog, BackupHistory, SystemSetting, Holiday, Notification, Timetable, OTPCode,
@@ -718,110 +719,110 @@ class ClassSubjectAllocationAdmin(BaseModelAdmin, ExportCsvMixin):
 
 # ==================== E-LEARNING ADMIN ====================
 
-class CourseModuleInline(admin.TabularInline):
-    model = CourseModule
-    extra = 0
-    fields = ['module_title', 'module_order', 'estimated_hours']
-    show_change_link = True
+# class CourseModuleInline(admin.TabularInline):
+#     model = CourseModule
+#     extra = 0
+#     fields = ['module_title', 'module_order', 'estimated_hours']
+#     show_change_link = True
 
-@admin.register(Course)
-class CourseAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['course_code', 'course_title', 'learning_area', 'class_id',
-                   'credit_hours', 'is_published', 'created_by']
-    list_filter = ['is_published', 'learning_area']
-    search_fields = ['course_code', 'course_title']
-    raw_id_fields = ['learning_area', 'class_id', 'created_by']
-    inlines = [CourseModuleInline]
-    actions = ['export_as_csv', 'publish_courses', 'unpublish_courses']
+# @admin.register(Course)
+# class CourseAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['course_code', 'course_title', 'learning_area', 'class_id',
+#                    'credit_hours', 'is_published', 'created_by']
+#     list_filter = ['is_published', 'learning_area']
+#     search_fields = ['course_code', 'course_title']
+#     raw_id_fields = ['learning_area', 'class_id', 'created_by']
+#     inlines = [CourseModuleInline]
+#     actions = ['export_as_csv', 'publish_courses', 'unpublish_courses']
     
-    def publish_courses(self, request, queryset):
-        updated = queryset.update(is_published=True, published_date=timezone.now())
-        self.message_user(request, f'{updated} courses published.')
-    publish_courses.short_description = "Publish selected courses"
+#     def publish_courses(self, request, queryset):
+#         updated = queryset.update(is_published=True, published_date=timezone.now())
+#         self.message_user(request, f'{updated} courses published.')
+#     publish_courses.short_description = "Publish selected courses"
     
-    def unpublish_courses(self, request, queryset):
-        updated = queryset.update(is_published=False)
-        self.message_user(request, f'{updated} courses unpublished.')
-    unpublish_courses.short_description = "Unpublish selected courses"
+#     def unpublish_courses(self, request, queryset):
+#         updated = queryset.update(is_published=False)
+#         self.message_user(request, f'{updated} courses unpublished.')
+#     unpublish_courses.short_description = "Unpublish selected courses"
 
-class LearningContentInline(admin.TabularInline):
-    model = LearningContent
-    extra = 0
-    fields = ['content_title', 'content_type', 'content_order', 'is_published']
-    show_change_link = True
+# class LearningContentInline(admin.TabularInline):
+#     model = LearningContent
+#     extra = 0
+#     fields = ['content_title', 'content_type', 'content_order', 'is_published']
+#     show_change_link = True
 
-@admin.register(CourseModule)
-class CourseModuleAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['module_title', 'course', 'module_order', 'estimated_hours']
-    list_filter = ['course']
-    search_fields = ['module_title', 'course__course_title']
-    raw_id_fields = ['course', 'competencies']
-    inlines = [LearningContentInline]
-    actions = ['export_as_csv']
+# @admin.register(CourseModule)
+# class CourseModuleAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['module_title', 'course', 'module_order', 'estimated_hours']
+#     list_filter = ['course']
+#     search_fields = ['module_title', 'course__course_title']
+#     raw_id_fields = ['course', 'competencies']
+#     inlines = [LearningContentInline]
+#     actions = ['export_as_csv']
 
-@admin.register(LearningContent)
-class LearningContentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['content_title', 'content_type', 'module', 'content_order', 
-                   'is_published', 'created_by']
-    list_filter = ['content_type', 'is_published']
-    search_fields = ['content_title']
-    raw_id_fields = ['module', 'created_by']
-    actions = ['export_as_csv']
+# @admin.register(LearningContent)
+# class LearningContentAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['content_title', 'content_type', 'module', 'content_order', 
+#                    'is_published', 'created_by']
+#     list_filter = ['content_type', 'is_published']
+#     search_fields = ['content_title']
+#     raw_id_fields = ['module', 'created_by']
+#     actions = ['export_as_csv']
 
-@admin.register(StudentEnrollment)
-class StudentEnrollmentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['student', 'course', 'enrollment_date', 'enrollment_status',
-                   'progress_percentage', 'completed_at']
-    list_filter = ['enrollment_status', 'course']
-    search_fields = ['student__admission_no', 'student__first_name', 'student__last_name']
-    raw_id_fields = ['student', 'course']
-    actions = ['export_as_csv']
+# @admin.register(StudentEnrollment)
+# class StudentEnrollmentAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['student', 'course', 'enrollment_date', 'enrollment_status',
+#                    'progress_percentage', 'completed_at']
+#     list_filter = ['enrollment_status', 'course']
+#     search_fields = ['student__admission_no', 'student__first_name', 'student__last_name']
+#     raw_id_fields = ['student', 'course']
+#     actions = ['export_as_csv']
 
-@admin.register(ContentProgress)
-class ContentProgressAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['enrollment', 'content', 'is_completed', 'completed_at',
-                   'time_spent_minutes', 'score']
-    list_filter = ['is_completed']
-    search_fields = ['enrollment__student__admission_no']
-    raw_id_fields = ['enrollment', 'content']
-    actions = ['export_as_csv']
+# @admin.register(ContentProgress)
+# class ContentProgressAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['enrollment', 'content', 'is_completed', 'completed_at',
+#                    'time_spent_minutes', 'score']
+#     list_filter = ['is_completed']
+#     search_fields = ['enrollment__student__admission_no']
+#     raw_id_fields = ['enrollment', 'content']
+#     actions = ['export_as_csv']
 
-class QuizQuestionInline(admin.TabularInline):
-    model = QuizQuestion
-    extra = 1
-    fields = ['question_text', 'question_type', 'question_order', 'points']
+# class QuizQuestionInline(admin.TabularInline):
+#     model = QuizQuestion
+#     extra = 1
+#     fields = ['question_text', 'question_type', 'question_order', 'points']
 
-@admin.register(ELearningQuiz)
-class ELearningQuizAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['quiz_title', 'content', 'time_limit_minutes', 'max_attempts',
-                   'passing_score', 'is_published']
-    list_filter = ['is_published']
-    search_fields = ['quiz_title']
-    raw_id_fields = ['content', 'created_by']
-    inlines = [QuizQuestionInline]
-    actions = ['export_as_csv']
+# @admin.register(ELearningQuiz)
+# class ELearningQuizAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['quiz_title', 'content', 'time_limit_minutes', 'max_attempts',
+#                    'passing_score', 'is_published']
+#     list_filter = ['is_published']
+#     search_fields = ['quiz_title']
+#     raw_id_fields = ['content', 'created_by']
+#     inlines = [QuizQuestionInline]
+#     actions = ['export_as_csv']
 
-@admin.register(QuizQuestion)
-class QuizQuestionAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['short_question', 'quiz', 'question_type', 'question_order', 'points']
-    list_filter = ['question_type']
-    search_fields = ['question_text']
-    raw_id_fields = ['quiz']
-    actions = ['export_as_csv']
+# @admin.register(QuizQuestion)
+# class QuizQuestionAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['short_question', 'quiz', 'question_type', 'question_order', 'points']
+#     list_filter = ['question_type']
+#     search_fields = ['question_text']
+#     raw_id_fields = ['quiz']
+#     actions = ['export_as_csv']
     
-    def short_question(self, obj):
-        return obj.question_text[:50] + '...' if len(obj.question_text) > 50 else obj.question_text
-    short_question.short_description = 'Question'
+#     def short_question(self, obj):
+#         return obj.question_text[:50] + '...' if len(obj.question_text) > 50 else obj.question_text
+#     short_question.short_description = 'Question'
 
-@admin.register(QuizAttempt)
-class QuizAttemptAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['enrollment', 'quiz', 'attempt_number', 'score', 'percentage',
-                   'is_passed', 'completed_at']
-    list_filter = ['is_passed', 'quiz']
-    search_fields = ['enrollment__student__admission_no']
-    raw_id_fields = ['enrollment', 'quiz']
-    readonly_fields = ['score', 'percentage', 'is_passed']
-    actions = ['export_as_csv']
+# @admin.register(QuizAttempt)
+# class QuizAttemptAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['enrollment', 'quiz', 'attempt_number', 'score', 'percentage',
+#                    'is_passed', 'completed_at']
+#     list_filter = ['is_passed', 'quiz']
+#     search_fields = ['enrollment__student__admission_no']
+#     raw_id_fields = ['enrollment', 'quiz']
+#     readonly_fields = ['score', 'percentage', 'is_passed']
+#     actions = ['export_as_csv']
 
 # ==================== FINANCE ADMIN ====================
 
@@ -1313,188 +1314,188 @@ class StaffAdmin(admin.ModelAdmin):
     full_name.short_description = 'Full Name'
 
 
-@admin.register(StaffLeave)
-class StaffLeaveAdmin(admin.ModelAdmin):
-    list_display = ['staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'status', 'applied_date']
-    list_filter = ['status', 'leave_type']
-    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'reason']
-    raw_id_fields = ['staff', 'approved_by', 'handover_to']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'total_days', 'applied_date']
+# @admin.register(StaffLeave)
+# class StaffLeaveAdmin(admin.ModelAdmin):
+#     list_display = ['staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'status', 'applied_date']
+#     list_filter = ['status', 'leave_type']
+#     search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'reason']
+#     raw_id_fields = ['staff', 'approved_by', 'handover_to']
+#     readonly_fields = ['id', 'created_at', 'updated_at', 'total_days', 'applied_date']
     
-    fieldsets = (
-        ('Leave Details', {
-            'fields': ('staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'reason', 'contact_during_leave')
-        }),
-        ('Approval', {
-            'fields': ('status', 'approved_by', 'approved_date', 'rejection_reason')
-        }),
-        ('Handover', {
-            'fields': ('handover_notes', 'handover_to')
-        }),
-    )
+#     fieldsets = (
+#         ('Leave Details', {
+#             'fields': ('staff', 'leave_type', 'start_date', 'end_date', 'total_days', 'reason', 'contact_during_leave')
+#         }),
+#         ('Approval', {
+#             'fields': ('status', 'approved_by', 'approved_date', 'rejection_reason')
+#         }),
+#         ('Handover', {
+#             'fields': ('handover_notes', 'handover_to')
+#         }),
+#     )
 
 
-@admin.register(LeaveBalance)
-class LeaveBalanceAdmin(admin.ModelAdmin):
-    list_display = ['staff', 'leave_year', 'leave_type', 'total_entitled', 'taken_so_far', 'balance', 'carried_over']
-    list_filter = ['leave_year', 'leave_type']
-    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name']
-    raw_id_fields = ['staff']
-    readonly_fields = ['id', 'created_at', 'updated_at']
+# @admin.register(LeaveBalance)
+# class LeaveBalanceAdmin(admin.ModelAdmin):
+#     list_display = ['staff', 'leave_year', 'leave_type', 'total_entitled', 'taken_so_far', 'balance', 'carried_over']
+#     list_filter = ['leave_year', 'leave_type']
+#     search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name']
+#     raw_id_fields = ['staff']
+#     readonly_fields = ['id', 'created_at', 'updated_at']
 
 
-@admin.register(PayrollComponent)
-class PayrollComponentAdmin(admin.ModelAdmin):
-    list_display = ['component_code', 'component_name', 'component_type', 'calculation_type', 'is_active']
-    list_filter = ['component_type', 'calculation_type', 'is_active', 'frequency', 'is_taxable']
-    search_fields = ['component_code', 'component_name']
-    readonly_fields = ['id', 'created_at', 'updated_at']
-    raw_id_fields = ['created_by']
+# @admin.register(PayrollComponent)
+# class PayrollComponentAdmin(admin.ModelAdmin):
+#     list_display = ['component_code', 'component_name', 'component_type', 'calculation_type', 'is_active']
+#     list_filter = ['component_type', 'calculation_type', 'is_active', 'frequency', 'is_taxable']
+#     search_fields = ['component_code', 'component_name']
+#     readonly_fields = ['id', 'created_at', 'updated_at']
+#     raw_id_fields = ['created_by']
 
 
-@admin.register(StaffPayrollComponent)
-class StaffPayrollComponentAdmin(admin.ModelAdmin):
-    list_display = ['staff', 'component', 'is_active']
-    list_filter = ['is_active']
-    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'component__component_code']
-    raw_id_fields = ['staff', 'component', 'approved_by', 'created_by']
-    readonly_fields = ['id', 'created_at', 'updated_at']
+# @admin.register(StaffPayrollComponent)
+# class StaffPayrollComponentAdmin(admin.ModelAdmin):
+#     list_display = ['staff', 'component', 'is_active']
+#     list_filter = ['is_active']
+#     search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'component__component_code']
+#     raw_id_fields = ['staff', 'component', 'approved_by', 'created_by']
+#     readonly_fields = ['id', 'created_at', 'updated_at']
 
 
-@admin.register(PayrollPeriod)
-class PayrollPeriodAdmin(admin.ModelAdmin):
-    list_display = ['period_code', 'period_name', 'start_date', 'end_date', 'pay_date', 'status', 'total_staff']
-    list_filter = ['status', 'is_locked']
-    search_fields = ['period_code', 'period_name']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'total_gross', 'total_deductions', 'total_net', 'total_paye', 'total_nssf', 'total_nhif']
-    raw_id_fields = ['processed_by', 'approved_by', 'closed_by', 'locked_by']
+# @admin.register(PayrollPeriod)
+# class PayrollPeriodAdmin(admin.ModelAdmin):
+#     list_display = ['period_code', 'period_name', 'start_date', 'end_date', 'pay_date', 'status', 'total_staff']
+#     list_filter = ['status', 'is_locked']
+#     search_fields = ['period_code', 'period_name']
+#     readonly_fields = ['id', 'created_at', 'updated_at', 'total_gross', 'total_deductions', 'total_net', 'total_paye', 'total_nssf', 'total_nhif']
+#     raw_id_fields = ['processed_by', 'approved_by', 'closed_by', 'locked_by']
 
 
-@admin.register(PayrollRecord)
-class PayrollRecordAdmin(admin.ModelAdmin):
-    list_display = ['payroll_period', 'staff', 'gross_salary', 'net_salary', 'payment_status', 'is_paid']
-    list_filter = ['payment_status', 'is_paid', 'is_calculated', 'is_approved']
-    search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'payroll_period__period_code']
-    raw_id_fields = ['payroll_period', 'staff', 'approved_by', 'calculated_by', 'paid_by']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'gross_salary', 'total_deductions', 'net_salary']
+# @admin.register(PayrollRecord)
+# class PayrollRecordAdmin(admin.ModelAdmin):
+#     list_display = ['payroll_period', 'staff', 'gross_salary', 'net_salary', 'payment_status', 'is_paid']
+#     list_filter = ['payment_status', 'is_paid', 'is_calculated', 'is_approved']
+#     search_fields = ['staff__staff_id', 'staff__first_name', 'staff__last_name', 'payroll_period__period_code']
+#     raw_id_fields = ['payroll_period', 'staff', 'approved_by', 'calculated_by', 'paid_by']
+#     readonly_fields = ['id', 'created_at', 'updated_at', 'gross_salary', 'total_deductions', 'net_salary']
 
 
-@admin.register(StaffLoan)
-class StaffLoanAdmin(admin.ModelAdmin):
-    list_display = ['loan_id', 'staff', 'loan_type', 'loan_amount', 'status', 'outstanding_balance']
-    list_filter = ['status', 'loan_type', 'interest_type']
-    search_fields = ['loan_id', 'staff__staff_id', 'staff__first_name', 'staff__last_name']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'loan_id', 'outstanding_balance']
-    raw_id_fields = ['staff', 'approved_by', 'created_by']
+# @admin.register(StaffLoan)
+# class StaffLoanAdmin(admin.ModelAdmin):
+#     list_display = ['loan_id', 'staff', 'loan_type', 'loan_amount', 'status', 'outstanding_balance']
+#     list_filter = ['status', 'loan_type', 'interest_type']
+#     search_fields = ['loan_id', 'staff__staff_id', 'staff__first_name', 'staff__last_name']
+#     readonly_fields = ['id', 'created_at', 'updated_at', 'loan_id', 'outstanding_balance']
+#     raw_id_fields = ['staff', 'approved_by', 'created_by']
 
 
-@admin.register(LoanRepayment)
-class LoanRepaymentAdmin(admin.ModelAdmin):
-    list_display = ['loan', 'repayment_date', 'amount_paid', 'principal_amount', 'interest_amount', 'is_overdue']
-    list_filter = ['is_overdue', 'payment_method']
-    search_fields = ['loan__loan_id', 'loan__staff__staff_id']
-    raw_id_fields = ['loan', 'processed_by']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'processed_date']
+# @admin.register(LoanRepayment)
+# class LoanRepaymentAdmin(admin.ModelAdmin):
+#     list_display = ['loan', 'repayment_date', 'amount_paid', 'principal_amount', 'interest_amount', 'is_overdue']
+#     list_filter = ['is_overdue', 'payment_method']
+#     search_fields = ['loan__loan_id', 'loan__staff__staff_id']
+#     raw_id_fields = ['loan', 'processed_by']
+#     readonly_fields = ['id', 'created_at', 'updated_at', 'processed_date']
 
 # ==================== LIBRARY ADMIN ====================
 
-@admin.register(BookResource)
-class BookResourceAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['title', 'authors', 'isbn', 'school_code', 'accession_number',
-                   'subject', 'total_copies', 'available_copies', 'condition_status']
-    list_filter = ['book_category', 'condition_status', 'language', 'subject']
-    search_fields = ['title', 'authors', 'isbn', 'school_code']
-    raw_id_fields = ['subject', 'added_by']
-    filter_horizontal = ['grade_levels']
-    actions = ['export_as_csv']
+# @admin.register(BookResource)
+# class BookResourceAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['title', 'authors', 'isbn', 'school_code', 'accession_number',
+#                    'subject', 'total_copies', 'available_copies', 'condition_status']
+#     list_filter = ['book_category', 'condition_status', 'language', 'subject']
+#     search_fields = ['title', 'authors', 'isbn', 'school_code']
+#     raw_id_fields = ['subject', 'added_by']
+#     filter_horizontal = ['grade_levels']
+#     actions = ['export_as_csv']
     
-    fieldsets = (
-        ('Identification', {
-            'fields': ('id', 'isbn', 'school_code', 'accession_number')
-        }),
-        ('Basic Information', {
-            'fields': ('title', 'authors', 'publisher', 'edition', 'year_of_publication',
-                      'language')
-        }),
-        ('Classification', {
-            'fields': ('subject', 'grade_levels', 'book_category')
-        }),
-        ('Physical Details', {
-            'fields': ('shelf_location', 'call_number', 'pages', 'price')
-        }),
-        ('Inventory', {
-            'fields': ('total_copies', 'available_copies', 'reserved_copies', 'condition_status')
-        }),
-        ('Digital Resources', {
-            'fields': ('digital_file_url', 'thumbnail_url', 'has_digital_version')
-        }),
-        ('Metadata', {
-            'fields': ('keywords', 'summary', 'table_of_contents')
-        }),
-        ('Status', {
-            'fields': ('is_active', 'is_reference_only')
-        }),
-        ('Audit', {
-            'fields': ('added_by', 'added_date', 'created_at', 'updated_at')
-        }),
-    )
+#     fieldsets = (
+#         ('Identification', {
+#             'fields': ('id', 'isbn', 'school_code', 'accession_number')
+#         }),
+#         ('Basic Information', {
+#             'fields': ('title', 'authors', 'publisher', 'edition', 'year_of_publication',
+#                       'language')
+#         }),
+#         ('Classification', {
+#             'fields': ('subject', 'grade_levels', 'book_category')
+#         }),
+#         ('Physical Details', {
+#             'fields': ('shelf_location', 'call_number', 'pages', 'price')
+#         }),
+#         ('Inventory', {
+#             'fields': ('total_copies', 'available_copies', 'reserved_copies', 'condition_status')
+#         }),
+#         ('Digital Resources', {
+#             'fields': ('digital_file_url', 'thumbnail_url', 'has_digital_version')
+#         }),
+#         ('Metadata', {
+#             'fields': ('keywords', 'summary', 'table_of_contents')
+#         }),
+#         ('Status', {
+#             'fields': ('is_active', 'is_reference_only')
+#         }),
+#         ('Audit', {
+#             'fields': ('added_by', 'added_date', 'created_at', 'updated_at')
+#         }),
+#     )
 
 # ==================== PARENT ADMIN ====================
 
-@admin.register(Parent)
-class ParentAdmin(BaseModelAdmin, ExportCsvMixin):
-    list_display = ['parent_id', 'full_name', 'relation_to_student', 'phone',
-                   'email', 'user_link', 'is_active']
-    list_filter = ['is_active', 'relation_to_student']
-    search_fields = ['parent_id', 'first_name', 'last_name', 'phone', 'email']
-    raw_id_fields = ['user']
-    filter_horizontal = ['students']
-    actions = ['export_as_csv', 'activate_parents', 'deactivate_parents']
+# @admin.register(Parent)
+# class ParentAdmin(BaseModelAdmin, ExportCsvMixin):
+#     list_display = ['parent_id', 'full_name', 'relation_to_student', 'phone',
+#                    'email', 'user_link', 'is_active']
+#     list_filter = ['is_active', 'relation_to_student']
+#     search_fields = ['parent_id', 'first_name', 'last_name', 'phone', 'email']
+#     raw_id_fields = ['user']
+#     filter_horizontal = ['students']
+#     actions = ['export_as_csv', 'activate_parents', 'deactivate_parents']
     
-    fieldsets = (
-        ('Parent Identification', {
-            'fields': ('id', 'parent_id', 'user')
-        }),
-        ('Personal Information', {
-            'fields': ('first_name', 'middle_name', 'last_name', 'relation_to_student')
-        }),
-        ('Contact', {
-            'fields': ('phone', 'email', 'occupation')
-        }),
-        ('Address', {
-            'fields': ('address', 'city', 'country')
-        }),
-        ('Associated Students', {
-            'fields': ('students',)
-        }),
-        ('Status', {
-            'fields': ('is_active',)
-        }),
-        ('Audit', {
-            'fields': ('created_at', 'updated_at')
-        }),
-    )
+#     fieldsets = (
+#         ('Parent Identification', {
+#             'fields': ('id', 'parent_id', 'user')
+#         }),
+#         ('Personal Information', {
+#             'fields': ('first_name', 'middle_name', 'last_name', 'relation_to_student')
+#         }),
+#         ('Contact', {
+#             'fields': ('phone', 'email', 'occupation')
+#         }),
+#         ('Address', {
+#             'fields': ('address', 'city', 'country')
+#         }),
+#         ('Associated Students', {
+#             'fields': ('students',)
+#         }),
+#         ('Status', {
+#             'fields': ('is_active',)
+#         }),
+#         ('Audit', {
+#             'fields': ('created_at', 'updated_at')
+#         }),
+#     )
     
-    def full_name(self, obj):
-        return obj.full_name
-    full_name.short_description = 'Full Name'
+#     def full_name(self, obj):
+#         return obj.full_name
+#     full_name.short_description = 'Full Name'
     
-    def user_link(self, obj):
-        if obj.user:
-            url = reverse('admin:cbe_app_user_change', args=[obj.user.id])
-            return format_html('<a href="{}">{}</a>', url, obj.user.username)
-        return '-'
-    user_link.short_description = 'User Account'
+#     def user_link(self, obj):
+#         if obj.user:
+#             url = reverse('admin:cbe_app_user_change', args=[obj.user.id])
+#             return format_html('<a href="{}">{}</a>', url, obj.user.username)
+#         return '-'
+#     user_link.short_description = 'User Account'
     
-    def activate_parents(self, request, queryset):
-        updated = queryset.update(is_active=True)
-        self.message_user(request, f'{updated} parents activated.')
-    activate_parents.short_description = "Activate selected parents"
+#     def activate_parents(self, request, queryset):
+#         updated = queryset.update(is_active=True)
+#         self.message_user(request, f'{updated} parents activated.')
+#     activate_parents.short_description = "Activate selected parents"
     
-    def deactivate_parents(self, request, queryset):
-        updated = queryset.update(is_active=False)
-        self.message_user(request, f'{updated} parents deactivated.')
-    deactivate_parents.short_description = "Deactivate selected parents"
+#     def deactivate_parents(self, request, queryset):
+#         updated = queryset.update(is_active=False)
+#         self.message_user(request, f'{updated} parents deactivated.')
+#     deactivate_parents.short_description = "Deactivate selected parents"
 
 # ==================== SYSTEM & AUDIT ADMIN ====================
 
@@ -1520,6 +1521,14 @@ class AuditLogAdmin(BaseModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
+@admin.register(OTPCode)
+class OTPCodeAdmin(BaseModelAdmin):
+    list_display = ['user', 'otp_code', 'expires_at', 'is_used']
+    list_filter = ['user', 'expires_at']
+    search_fields = ['user', 'otp_code']
+    raw_id_fields = ['user']
+    actions = ['export_as_csv']
+    
 @admin.register(BackupHistory)
 class BackupHistoryAdmin(BaseModelAdmin, ExportCsvMixin):
     list_display = ['backup_name', 'backup_type', 'backup_start', 'backup_end',
@@ -1701,11 +1710,12 @@ class WeightConfigurationAdmin(admin.ModelAdmin):
     list_filter = ['is_active']
     
 ###############################EXAM ADMIN################################
-    
+ # ... previous admin registrations ...
+
 @admin.register(Exam)
 class ExamAdmin(admin.ModelAdmin):
-    list_display = ['exam_code', 'title', 'exam_type', 'grade_level', 'academic_year', 'term', 'status', 'created_at']
-    list_filter = ['status', 'exam_type', 'grade_level', 'academic_year', 'term']
+    list_display = ['exam_code', 'title', 'exam_type', 'display_grade_level', 'academic_year', 'term', 'status', 'created_at']
+    list_filter = ['status', 'exam_type', 'academic_year', 'term']
     search_fields = ['exam_code', 'title']
     readonly_fields = ['id', 'created_at', 'updated_at']
     fieldsets = (
@@ -1732,12 +1742,21 @@ class ExamAdmin(admin.ModelAdmin):
         }),
     )
     
+    def display_grade_level(self, obj):
+        grade_map = {
+            '1': 'Pre-Primary 1', '2': 'Pre-Primary 2',
+            '3': 'Grade 1', '4': 'Grade 2', '5': 'Grade 3',
+            '6': 'Grade 4', '7': 'Grade 5', '8': 'Grade 6',
+            '9': 'Grade 7', '10': 'Grade 8', '11': 'Grade 9',
+        }
+        return grade_map.get(str(obj.grade_level), obj.grade_level)
+    display_grade_level.short_description = 'Grade Level'
+    
     def save_model(self, request, obj, form, change):
         if not change:
             obj.created_by = request.user
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
-
 
 @admin.register(ExamSchedule)
 class ExamScheduleAdmin(admin.ModelAdmin):

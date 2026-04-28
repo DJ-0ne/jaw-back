@@ -21,4 +21,6 @@ urlpatterns = [
     path('teacher/', include('cbe_app.urls.teacher_urls.teacher_class_urls')),
     path('teacher/attendance/', include('cbe_app.urls.teacher_urls.teacher_attendance_urls')),
     path('teacher/curriculum/', include('cbe_app.urls.teacher_urls.teacher_curriculum_urls')),
+    path('teacher/assessment/', include('cbe_app.urls.teacher_urls.teacher_assesment_urls')),
+    path('teacher/jss/', include('cbe_app.urls.teacher_urls.teacher_jssentry_urls')),
 ]

@@ -3034,7 +3034,7 @@ class Exam(BaseModel):
     ]
     
     # Basic Information
-    exam_code = models.CharField(max_length=20, unique=True)
+    exam_code = models.CharField(max_length=100, unique=True)
     title = models.CharField(max_length=200)
     exam_type = models.CharField(max_length=20, choices=EXAM_TYPE_CHOICES)
     grade_level = models.CharField(max_length=10, choices=GRADE_LEVEL_CHOICES)

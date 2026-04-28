@@ -140,7 +140,8 @@ class ClassStudentsView(APIView):
                 archived=False
             ).order_by('first_name', 'last_name')
             
-            serializer = StudentListSerializer(students, many=True)
+            # FIXED: Pass class_obj in context
+            serializer = StudentListSerializer(students, many=True, context={'class_obj': class_obj})
             
             return Response({
                 'success': True,
@@ -155,7 +156,6 @@ class ClassStudentsView(APIView):
                 'data': [],
                 'error': str(e)
             }, status=500)
-
 
 class ClassAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
