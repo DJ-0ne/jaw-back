@@ -13,7 +13,7 @@ from django.http import HttpResponseRedirect
 import json
 
 from .models import (
-    Department, DepartmentStaffAssignment,
+    Department, DepartmentStaffAssignment, StudentPortfolio,
     # User Management
     User, UserSession, PasswordHistory,
     
@@ -1757,6 +1757,7 @@ class ExamAdmin(admin.ModelAdmin):
             obj.created_by = request.user
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
+        
 
 @admin.register(ExamSchedule)
 class ExamScheduleAdmin(admin.ModelAdmin):
@@ -1861,3 +1862,69 @@ class ExamResultAdmin(admin.ModelAdmin):
             return format_html('<a href="{}">{}</a>', url, obj.student.full_name)
         return '-'
     student_link.short_description = 'Student'
+
+
+@admin.register(StudentPortfolio)
+class StudentPortfolioAdmin(admin.ModelAdmin):
+    # What you see in the list view
+    list_display = (
+        'student', 
+        'get_competency', 
+        'term', 
+        'academic_year', 
+        'rating', 
+        'status', 
+        'assessed_date'
+    )
+    
+    # Filters on the right side
+    list_filter = (
+        'status', 
+        'academic_year', 
+        'term', 
+        'rating', 
+        'evidence_type'
+    )
+    
+    # Search functionality
+    search_fields = (
+        'student__full_name', 
+        'student__admission_no', 
+        'competency__competency_code', 
+        'core_competency__name'
+    )
+    
+    # Organizing the form layout
+    fieldsets = (
+        ('Student & Period', {
+            'fields': ('student', 'term', 'academic_year')
+        }),
+        ('Competency Tracking', {
+            'description': 'Fill either Curriculum Competency OR Core Competency',
+            'fields': ('competency', 'core_competency')
+        }),
+        ('Assessment Data', {
+            'fields': ('rating', 'sub_level', 'percentage', 'teacher_comment')
+        }),
+        ('Evidence & Verification', {
+            'fields': ('evidence_url', 'evidence_type', 'status', 'assessed_by', 'assessed_date')
+        }),
+    )
+    
+    readonly_fields = ('assessed_date',)
+
+    def get_competency(self, obj):
+        """Helper to show which competency is being tracked in the list view"""
+        if obj.competency:
+            return f"Code: {obj.competency.competency_code}"
+        if obj.core_competency:
+            return f"Core: {obj.core_competency.name}"
+        return "Not Set"
+    
+    get_competency.short_description = 'Competency'
+
+    def save_model(self, request, obj, form, change):
+        """Automatically set assessed_by to the current admin user if status is assessed"""
+        if obj.status in ['assessed', 'reviewed'] and not obj.assessed_by:
+            obj.assessed_by = request.user
+        super().save_model(request, obj, form, change)

@@ -575,7 +575,7 @@ class AssessmentWindow(BaseModel):
 
 class SummativeAssessment(BaseModel):
     """Summative Assessment Definition for CBE"""
-    assessment_code = models.CharField(max_length=30, unique=True, default=generate_assessment_code)
+    assessment_code = models.CharField(max_length=100, unique=True, default=generate_assessment_code)
     assessment_window = models.ForeignKey(AssessmentWindow, on_delete=models.CASCADE, related_name='assessments')
     class_id = models.ForeignKey('Class', on_delete=models.CASCADE, related_name='summative_assessments')
     learning_area = models.ForeignKey(LearningArea, on_delete=models.CASCADE, related_name='cbe_assessments')
@@ -628,7 +628,7 @@ class SummativeRating(BaseModel):
 
     assessment = models.ForeignKey(SummativeAssessment, on_delete=models.CASCADE, related_name='ratings')
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='summative_ratings')
-    competency = models.ForeignKey(Competency, on_delete=models.CASCADE, related_name='student_ratings')
+    competency = models.ForeignKey(Competency, on_delete=models.CASCADE, null=True, blank=True, related_name='student_ratings')
 
     rating = models.CharField(max_length=3, choices=RATING_CHOICES)  # ← 2 → 3
     teacher_comment = models.TextField(blank=True, null=True)
@@ -2928,21 +2928,39 @@ class WeightConfiguration(BaseModel):
     def __str__(self):
         return f"SBA: {self.sba_weight}% | Exam: {self.exam_weight}%"
 
-class StudentPortfolio(models.Model):
-    """Track student progress on competencies"""
+
+
+class StudentPortfolio(BaseModel):
+    """Track student progress on competencies (both curriculum and core competencies)"""
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='portfolios')
-    competency = models.ForeignKey(Competency, on_delete=models.CASCADE, related_name='student_portfolios')
+    
+    # Can track either curriculum competency OR core competency (KICD)
+    competency = models.ForeignKey(
+        'Competency', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='student_portfolios'
+    )
+    core_competency = models.ForeignKey(
+        'CoreCompetency', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='student_portfolios'
+    )
+    
     term = models.ForeignKey(Term, on_delete=models.CASCADE)
     academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE)
     
     # Assessment ratings
-    rating = models.CharField(max_length=2, choices=GradingScale.RATING_CHOICES, blank=True, null=True)
+    rating = models.CharField(max_length=3, choices=GradingScale.RATING_CHOICES, blank=True, null=True)
     sub_level = models.IntegerField(blank=True, null=True)
     percentage = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
     
     # Evidence
     evidence_url = models.CharField(max_length=500, blank=True, null=True)
-    evidence_type = models.CharField(max_length=50, blank=True, null=True)  # photo, video, document, etc.
+    evidence_type = models.CharField(max_length=50, blank=True, null=True)
     teacher_comment = models.TextField(blank=True, null=True)
     
     # Status
@@ -2954,16 +2972,18 @@ class StudentPortfolio(models.Model):
     
     assessed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assessed_portfolios')
     assessed_date = models.DateTimeField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    
     
     class Meta:
-        unique_together = ['student', 'competency', 'term', 'academic_year']
+        unique_together = ['student', 'competency', 'core_competency', 'term', 'academic_year']
     
     def __str__(self):
-        return f"{self.student.full_name} - {self.competency.competency_code} - {self.rating}{self.sub_level if self.sub_level else ''}"
-    
-# Add to your models.py - after the SystemSetting model or create a new one
+        if self.competency:
+            return f"{self.student.full_name} - {self.competency.competency_code} - {self.rating}{self.sub_level if self.sub_level else ''}"
+        elif self.core_competency:
+            return f"{self.student.full_name} - Core: {self.core_competency.name} - Level {self.sub_level}"
+        return f"{self.student.full_name} - Unknown competency"
+
 
 class FinancialSetting(BaseModel):
     """Financial settings for the school"""

@@ -4,7 +4,8 @@ from cbe_app.views.teacher_views.teacher_jssentry_views import (
     JSSStudentsView,
     JSSSubjectsView,
     JSSMarksBulkSaveView,
-    JSSMarksRetrieveView
+    JSSMarksRetrieveView,
+    JSSTermsView
 )
 
 urlpatterns = [
@@ -13,4 +14,5 @@ urlpatterns = [
     path('subjects/', JSSSubjectsView.as_view(), name='teacher-jss-subjects'),
     path('marks/bulk-save/', JSSMarksBulkSaveView.as_view(), name='teacher-jss-marks-bulk-save'),
     path('marks/retrieve/', JSSMarksRetrieveView.as_view(), name='teacher-jss-marks-retrieve'),
+    path('terms/', JSSTermsView.as_view(), name='teacher-jss-terms'),
 ]

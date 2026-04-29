@@ -1,20 +1,35 @@
 from rest_framework import serializers
 from cbe_app.models import (
     Class, Student, Staff, ClassSubjectAllocation, 
-    Term, AcademicYear, Exam, ExamResult, LearningArea
+    Term, AcademicYear, LearningArea, Strand,
+    SummativeAssessment, SummativeRating, AssessmentWindow
 )
 
 
 class JSSClassSerializer(serializers.ModelSerializer):
     grade_level = serializers.IntegerField(source='numeric_level')
+    display_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Class
-        fields = ['id', 'class_name', 'class_code', 'stream', 'grade_level', 'capacity']
+        fields = ['id', 'class_name', 'class_code', 'stream', 'grade_level', 'numeric_level', 'capacity', 'display_name']
+    
+    def get_display_name(self, obj):
+        if obj.numeric_level == 9:
+            grade = 7
+        elif obj.numeric_level == 10:
+            grade = 8
+        elif obj.numeric_level == 11:
+            grade = 9
+        else:
+            grade = obj.numeric_level
+        stream_text = f" - {obj.stream}" if obj.stream else ""
+        return f"Grade {grade}{stream_text}"
 
 
 class JSSStudentSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    admission_no = serializers.CharField()
     
     class Meta:
         model = Student
@@ -24,41 +39,34 @@ class JSSStudentSerializer(serializers.ModelSerializer):
         return obj.full_name
 
 
-class JSSSubjectSerializer(serializers.ModelSerializer):
-    id = serializers.CharField(source='area_code')
-    name = serializers.CharField(source='area_name')
-    code = serializers.CharField(source='area_code')
+class JSSSubjectSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    code = serializers.CharField()
     sba_weight = serializers.IntegerField(default=40)
     exam_weight = serializers.IntegerField(default=60)
-    
+
+
+class JSSTermSerializer(serializers.ModelSerializer):
     class Meta:
-        model = LearningArea
-        fields = ['id', 'name', 'code', 'sba_weight', 'exam_weight']
+        model = Term
+        fields = ['id', 'term', 'start_date', 'end_date', 'is_current']
 
 
 class JSSSubjectMarkSerializer(serializers.Serializer):
-    sba = serializers.FloatField(allow_null=True, min_value=0, max_value=100)
-    exam = serializers.FloatField(allow_null=True, min_value=0, max_value=100)
+    sba = serializers.FloatField(allow_null=True)
+    exam = serializers.FloatField(allow_null=True)
     weighted_total = serializers.FloatField(allow_null=True)
-    level_code = serializers.CharField(allow_null=True)
     grade = serializers.CharField(allow_null=True)
+    level_code = serializers.CharField(allow_null=True)
 
 
-class JSSStudentMarksSerializer(serializers.Serializer):
-    student_id = serializers.UUIDField()
-    marks = serializers.DictField(child=JSSSubjectMarkSerializer())
-
-
-class JSSBulkSaveSerializer(serializers.Serializer):
+class JSSMarksDataSerializer(serializers.Serializer):
     class_id = serializers.UUIDField()
-    term = serializers.CharField(max_length=20)
+    term = serializers.CharField()
     year = serializers.IntegerField()
     marks = serializers.DictField(
-        child=serializers.DictField(child=JSSSubjectMarkSerializer())
+        child=serializers.DictField(
+            child=JSSSubjectMarkSerializer()
+        )
     )
-
-
-class JSSMarksRetrieveSerializer(serializers.Serializer):
-    class_id = serializers.UUIDField()
-    term = serializers.CharField(max_length=20)
-    year = serializers.IntegerField()

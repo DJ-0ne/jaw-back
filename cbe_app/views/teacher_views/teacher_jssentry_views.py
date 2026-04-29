@@ -3,18 +3,64 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 import logging
-from django.db.models import Q
+import uuid
 
 from cbe_app.models import (
-    Class, Student, Staff, LearningArea, Exam, ExamResult,
-    ClassSubjectAllocation, Term, AcademicYear,Strand
+    Class, Student, Staff, LearningArea, Strand,
+    ClassSubjectAllocation, Term, AcademicYear,
+    SummativeAssessment, SummativeRating, AssessmentWindow
 )
 from cbe_app.serializers.teacher_serializers.teacher_jss_serializers import (
     JSSClassSerializer, JSSStudentSerializer, JSSSubjectSerializer,
-    JSSBulkSaveSerializer
+    JSSMarksDataSerializer, JSSTermSerializer
 )
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_grade_label(percentage):
+    """Calculate achievement level based on percentage"""
+    if percentage is None:
+        return None
+    if percentage >= 90:
+        return 'EE1'
+    elif percentage >= 75:
+        return 'EE2'
+    elif percentage >= 58:
+        return 'ME1'
+    elif percentage >= 41:
+        return 'ME2'
+    elif percentage >= 31:
+        return 'AE1'
+    elif percentage >= 21:
+        return 'AE2'
+    elif percentage >= 11:
+        return 'BE1'
+    elif percentage >= 1:
+        return 'BE2'
+    else:
+        return 'AB'
+
+
+def calculate_weighted_total(sba_score, exam_score, sba_weight=40, exam_weight=60):
+    """Calculate weighted total from SBA and exam scores"""
+    if sba_score is None or exam_score is None:
+        return None
+    weighted = (sba_score * sba_weight / 100) + (exam_score * exam_weight / 100)
+    return round(weighted * 10) / 10
+
+
+class JSSTermsView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            terms = Term.objects.all().order_by('term')
+            data = [{'id': str(t.id), 'name': t.term} for t in terms]
+            return Response({'success': True, 'data': data})
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=500)
+
 
 class JSSClassesView(APIView):
     permission_classes = [IsAuthenticated]
@@ -30,7 +76,6 @@ class JSSClassesView(APIView):
             
             staff = request.user.staff_profile
             
-            # Get classes where teacher is class teacher
             classes = Class.objects.filter(
                 class_teacher=staff,
                 is_active=True
@@ -38,7 +83,6 @@ class JSSClassesView(APIView):
             
             data = []
             for cls in classes:
-                # Convert numeric_level to display grade
                 if cls.numeric_level == 9:
                     display_grade = 7
                 elif cls.numeric_level == 10:
@@ -53,8 +97,8 @@ class JSSClassesView(APIView):
                     'class_name': cls.class_name,
                     'class_code': cls.class_code,
                     'stream': cls.stream,
-                    'grade_level': display_grade,  # This is what frontend uses
-                    'numeric_level': cls.numeric_level,  # Actual database value
+                    'grade_level': display_grade,
+                    'numeric_level': cls.numeric_level,
                     'capacity': cls.capacity
                 })
             
@@ -74,7 +118,6 @@ class JSSClassesView(APIView):
 
 
 class JSSStudentsView(APIView):
-    """Get students for a JSS class"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request, class_id):
@@ -110,6 +153,7 @@ class JSSStudentsView(APIView):
                 'error': str(e)
             }, status=500)
 
+
 class JSSSubjectsView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -124,7 +168,6 @@ class JSSSubjectsView(APIView):
                     'message': 'grade_level parameter is required'
                 }, status=400)
             
-            # Convert display grade (7,8,9) to numeric_level (9,10,11)
             numeric_level_map = {7: 9, 8: 10, 9: 11}
             db_numeric_level = numeric_level_map.get(int(grade_level))
             
@@ -135,7 +178,6 @@ class JSSSubjectsView(APIView):
                     'message': f'Invalid grade level: {grade_level}'
                 }, status=400)
             
-            # Get subjects that have strands for this numeric level
             subject_ids = Strand.objects.filter(
                 grade_level__level=db_numeric_level
             ).values_list('learning_area_id', flat=True).distinct()
@@ -169,6 +211,7 @@ class JSSSubjectsView(APIView):
                 'error': str(e)
             }, status=500)
 
+
 class JSSMarksRetrieveView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -185,8 +228,13 @@ class JSSMarksRetrieveView(APIView):
                     'message': 'No filters provided'
                 })
             
-            term_number = term_name.replace('Term ', '')
-            year = int(year)
+            term = Term.objects.filter(term=term_name).first()
+            if not term:
+                return Response({
+                    'success': True,
+                    'data': {},
+                    'message': 'Term not found'
+                })
             
             try:
                 class_obj = Class.objects.get(id=class_id)
@@ -197,6 +245,12 @@ class JSSMarksRetrieveView(APIView):
                     'message': 'Class not found'
                 }, status=404)
             
+            # Get assessment window for this term (End-Term window)
+            assessment_window = AssessmentWindow.objects.filter(
+                term=term,
+                assessment_type='End-Term'
+            ).first()
+            
             students = Student.objects.filter(current_class=class_obj, status='Active')
             subjects = LearningArea.objects.filter(is_active=True)
             
@@ -206,6 +260,32 @@ class JSSMarksRetrieveView(APIView):
                 marks_data[str(student.id)] = {}
                 
                 for subject in subjects:
+                    # Get summative assessment for this class, subject, term
+                    summative = None
+                    exam_score = None
+                    if assessment_window:
+                        summative = SummativeAssessment.objects.filter(
+                            assessment_window=assessment_window,
+                            class_id=class_obj,
+                            learning_area=subject
+                        ).first()
+                        
+                        if summative:
+                            rating = SummativeRating.objects.filter(
+                                assessment=summative,
+                                student=student
+                            ).first()
+                            if rating:
+                                # Convert rating to score
+                                rating_map = {
+                                    'EE1': 95, 'EE2': 82, 'ME1': 66, 'ME2': 49,
+                                    'AE1': 35, 'AE2': 25, 'BE1': 15, 'BE2': 5, 'AB': 0
+                                }
+                                exam_score = rating_map.get(rating.rating, None)
+                    
+                    # SBA is calculated from Exam table (CATs and CBAs)
+                    # This part stays the same - SBA comes from exams
+                    from cbe_app.models import Exam, ExamResult
                     assessments = Exam.objects.filter(
                         subjects__contains=[subject.area_name],
                         exam_type__in=['cat', 'cba']
@@ -224,40 +304,11 @@ class JSSMarksRetrieveView(APIView):
                     
                     sba_average = sum(sba_scores) / len(sba_scores) if sba_scores else None
                     
-                    exam_code = f"JSS-{year}-{term_number}-{str(class_id)[:8]}-{subject.area_code}"
-                    exam = Exam.objects.filter(exam_code=exam_code).first()
-                    
-                    exam_score = None
-                    if exam:
-                        result = ExamResult.objects.filter(exam=exam, student=student).first()
-                        if result and result.marks_obtained is not None:
-                            exam_score = float(result.marks_obtained)
-                    
                     weighted_total = None
                     grade_label = None
                     if sba_average is not None and exam_score is not None:
-                        weighted_total = (sba_average * 0.4) + (exam_score * 0.6)
-                        weighted_total = round(weighted_total * 10) / 10
-                        
-                        # Calculate achievement level
-                        if weighted_total >= 90:
-                            grade_label = 'EE1'
-                        elif weighted_total >= 75:
-                            grade_label = 'EE2'
-                        elif weighted_total >= 58:
-                            grade_label = 'ME1'
-                        elif weighted_total >= 41:
-                            grade_label = 'ME2'
-                        elif weighted_total >= 31:
-                            grade_label = 'AE1'
-                        elif weighted_total >= 21:
-                            grade_label = 'AE2'
-                        elif weighted_total >= 11:
-                            grade_label = 'BE1'
-                        elif weighted_total >= 1:
-                            grade_label = 'BE2'
-                        else:
-                            grade_label = 'AB'
+                        weighted_total = calculate_weighted_total(sba_average, exam_score)
+                        grade_label = calculate_grade_label(weighted_total)
                     
                     marks_data[str(student.id)][subject.area_code] = {
                         'sba': round(sba_average, 1) if sba_average else None,
@@ -270,7 +321,7 @@ class JSSMarksRetrieveView(APIView):
             return Response({
                 'success': True,
                 'data': marks_data,
-                'message': 'Marks retrieved with calculated SBA averages'
+                'message': 'Marks retrieved'
             })
             
         except Exception as e:
@@ -280,9 +331,10 @@ class JSSMarksRetrieveView(APIView):
                 'data': {},
                 'error': str(e)
             }, status=500)
-            
+
+
 class JSSMarksBulkSaveView(APIView):
-    """Save only summative exam scores (SBA is calculated automatically)"""
+    """Save summative scores to SummativeAssessment and SummativeRating"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
@@ -293,8 +345,33 @@ class JSSMarksBulkSaveView(APIView):
             year = data.get('year')
             marks_data = data.get('marks', {})
             
-            term_number = term_name.replace('Term ', '')
-            year = int(year)  # Convert to integer
+            # Get term
+            term = Term.objects.filter(term=term_name).first()
+            if not term:
+                return Response({
+                    'success': False,
+                    'error': f'Term "{term_name}" not found'
+                }, status=404)
+            
+            # Get or create assessment window
+            assessment_window, _ = AssessmentWindow.objects.get_or_create(
+                term=term,
+                assessment_type='End-Term',
+                defaults={
+                    'weight_percentage': 60,
+                    'open_date': timezone.now().date(),
+                    'close_date': timezone.now().date(),
+                    'is_active': True
+                }
+            )
+            
+            try:
+                class_obj = Class.objects.get(id=class_id)
+            except Class.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Class not found'
+                }, status=404)
             
             saved_count = 0
             
@@ -319,44 +396,39 @@ class JSSMarksBulkSaveView(APIView):
                     if not subject:
                         continue
                     
-                    # Create a shorter exam code
-                    short_class_id = str(class_id)[:8]
-                    exam_code = f"JSS-{year}-{term_number}-{short_class_id}-{subject_code}"
-                    # Ensure length is within limit
-                    if len(exam_code) > 100:
-                        exam_code = exam_code[:100]
+                    # Convert score to rating
+                    rating_value = calculate_grade_label(exam_score)
                     
-                    exam, created = Exam.objects.get_or_create(
-                        exam_code=exam_code,
+                    # Get or create summative assessment
+                    assessment_code = f"SUM-{year}-{term_name}-{class_id[:8]}-{subject_code}"
+                    summative, created = SummativeAssessment.objects.get_or_create(
+                        assessment_window=assessment_window,
+                        class_id=class_obj,
+                        learning_area=subject,
                         defaults={
-                            'title': f"{subject.area_name} - Summative {term_name} {year}",
-                            'exam_type': 'summative',
-                            'grade_level': '7',
-                            'academic_year': year,
-                            'term': int(term_number),
-                            'total_marks': 100,
-                            'status': 'published',
-                            'created_by': request.user
+                            'assessment_code': assessment_code,
+                            'teacher': request.user,
+                            'status': 'Published'
                         }
                     )
                     
-                    # Save the exam score
-                    result, created = ExamResult.objects.update_or_create(
-                        exam=exam,
+                    # Save the rating
+                    rating, created = SummativeRating.objects.update_or_create(
+                        assessment=summative,
                         student=student,
-                        subject=subject.area_name,
+                        competency=None,
                         defaults={
-                            'marks_obtained': exam_score,
-                            'remarks': f"Summative Exam Score: {exam_score}%",
-                            'marked_by': request.user,
-                            'marked_at': timezone.now()
+                            'rating': rating_value,
+                            'teacher_comment': f"Summative Exam Score: {exam_score}%",
+                            'rated_by': request.user,
+                            'rated_at': timezone.now()
                         }
                     )
                     saved_count += 1
             
             return Response({
                 'success': True,
-                'message': f'Saved {saved_count} summative exam scores',
+                'message': f'Saved {saved_count} summative scores',
                 'saved_count': saved_count
             })
             

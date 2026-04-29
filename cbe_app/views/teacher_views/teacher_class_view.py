@@ -20,6 +20,7 @@ from cbe_app.serializers.teacher_serializers.teacher_class_serializers import (
     EvidenceUploadSerializer, StudentPortfolioSerializer
 )
 
+
 logger = logging.getLogger(__name__)
 
 
