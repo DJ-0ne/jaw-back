@@ -639,6 +639,40 @@ def get_grade_levels(request):
         logger.error(f"Error fetching grade levels: {str(e)}")
         return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_grade_level(request):
+    """Create a new grade level"""
+    try:
+        if request.user.role not in ['registrar', 'system_admin']:
+            return Response({
+                'success': False,
+                'error': 'You do not have permission to create grade levels'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = GradeLevelSerializer(data=request.data)
+        if serializer.is_valid():
+            grade = serializer.save()
+            logger.info(f"Grade level created: {grade.name} by {request.user.username}")
+            return Response({
+                'success': True,
+                'data': serializer.data,
+                'message': f'Grade level "{grade.name}" created successfully'
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                'success': False,
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    except Exception as e:
+        logger.error(f"Error creating grade level: {str(e)}")
+        return Response({
+            'success': False,
+            'error': 'Failed to create grade level'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
 
 @api_view(['PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])

@@ -14,4 +14,5 @@ urlpatterns = [
     path('<uuid:class_id>/', views.get_class_detail, name='get-class-detail'),
     path('update/<uuid:class_id>/', views.update_class, name='update-class'),
     path('delete/<uuid:class_id>/', views.delete_class, name='delete-class'),
+    path('subjects/', views.get_subjects, name='get-subjects'),
 ]

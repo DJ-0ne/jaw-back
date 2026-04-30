@@ -133,12 +133,19 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, data):
-        if not data.get('guardian_name') and not (data.get('father_name') or data.get('mother_name')):
+    # For partial updates, fall back to existing instance values
+        guardian_name = data.get('guardian_name') or (self.instance.guardian_name if self.instance else None)
+        father_name = data.get('father_name') or (self.instance.father_name if self.instance else None)
+        mother_name = data.get('mother_name') or (self.instance.mother_name if self.instance else None)
+        emergency_contact = data.get('emergency_contact') or (self.instance.emergency_contact if self.instance else None)
+        emergency_contact_name = data.get('emergency_contact_name') or (self.instance.emergency_contact_name if self.instance else None)
+
+        if not guardian_name and not (father_name or mother_name):
             raise ValidationError("Either guardian or parent information must be provided")
-        
-        if not data.get('emergency_contact') or not data.get('emergency_contact_name'):
+
+        if not emergency_contact or not emergency_contact_name:
             raise ValidationError("Emergency contact information is required")
-        
+
         return data
 
 

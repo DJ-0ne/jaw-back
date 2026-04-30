@@ -101,8 +101,7 @@ class CompetencySerializer(serializers.ModelSerializer):
 class GradeLevelSerializer(serializers.ModelSerializer):
     class Meta:
         model = GradeLevel
-        fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'level', 'name', 'description']
 
 
 class GradingScaleSerializer(serializers.ModelSerializer):

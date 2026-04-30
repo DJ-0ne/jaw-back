@@ -6,7 +6,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 import logging
 
-from ...models import Class, User, Student, Staff
+from ...models import Class, User, Student, Staff, LearningArea
 from ...serializers.registrar_serializers.class_mngnt_serializers import (
     ClassSerializer, ClassCreateSerializer, StreamSerializer,
     NumericLevelSerializer, TeacherSerializer
@@ -393,4 +393,30 @@ def get_class_detail(request, class_id):
         return Response({
             'success': False,
             'error': 'Failed to fetch class details'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_subjects(request):
+    try:
+        subjects = LearningArea.objects.filter(is_active=True).order_by('area_name')
+        
+        data = []
+        for subject in subjects:
+            data.append({
+                'id': str(subject.id),
+                'name': subject.area_name,
+                'code': subject.area_code,
+                'type': subject.area_type
+            })
+        
+        return Response({
+            'success': True,
+            'data': data
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error fetching subjects: {str(e)}")
+        return Response({
+            'success': False,
+            'error': 'Failed to fetch subjects'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

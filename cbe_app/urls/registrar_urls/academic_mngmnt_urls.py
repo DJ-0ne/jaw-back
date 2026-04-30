@@ -16,7 +16,7 @@ urlpatterns = [
     path('academic-years/', views.get_academic_years, name='get-academic-years'),
     path('academic-years/create/', views.create_academic_year, name='create-academic-year'),
     path('academic-years/<uuid:year_id>/', views.academic_year_detail, name='academic-year-detail'),
-    
+
     # Terms
     path('terms/', views.get_terms, name='get-terms'),
     path('terms/create/', views.create_term, name='create-term'),
@@ -60,7 +60,8 @@ urlpatterns = [
     
     # Grade Levels
     path('grade-levels/', views.get_grade_levels, name='get-grade-levels'),
-    path('grade-levels/<uuid:grade_id>/', views.grade_level_detail, name='grade-level-detail'),
+    path('grade-levels/create/', views.create_grade_level, name='create-grade-level'),
+    path('grade-levels/<int:grade_id>/', views.grade_level_detail, name='grade-level-detail'),    
     
     # Grading Scales
     path('grading-scales/', views.get_grading_scales, name='get-grading-scales'),
@@ -80,7 +81,10 @@ urlpatterns = [
     path('student-portfolios/', views.get_student_portfolios, name='get-student-portfolios'),
     path('student-portfolios/create/', views.create_student_portfolio, name='create-student-portfolio'),
     path('student-portfolios/<uuid:portfolio_id>/', views.update_student_portfolio, name='update-student-portfolio'),
-    
+
+    path('academic-years/', views.get_academic_years),
+    path('academic-years/create/', views.create_academic_year),
+    path('academic-years/<uuid:year_id>/', views.academic_year_detail),
     # Bulk Operations
     path('bulk-import/', views.bulk_import_curriculum, name='bulk-import-curriculum'),
     path('export/', views.export_curriculum, name='export-curriculum'),

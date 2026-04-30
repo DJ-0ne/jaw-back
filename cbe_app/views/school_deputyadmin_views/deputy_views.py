@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
+from django.shortcuts import get_object_or_404
 from cbe_app.models import (
     DisciplineIncident, ConductRecord, InterventionProgram,
     CounselingSession, Suspension, StudentDisciplinePoints
@@ -65,7 +65,6 @@ def get_discipline_cases(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_discipline_case(request):
-    """Create a new discipline case"""
     try:
         serializer = DisciplineIncidentCreateSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
@@ -83,6 +82,7 @@ def create_discipline_case(request):
             term=term,
             defaults={'total_points': 0}
         )
+        
         points_record.total_points += case.points_awarded
         points_record.last_incident_date = case.incident_date
         
@@ -103,8 +103,38 @@ def create_discipline_case(request):
             'message': 'Case created successfully'
         }, status=status.HTTP_201_CREATED)
     except Exception as e:
+        import traceback
+        print("FULL ERROR:", traceback.format_exc())  # ADD THIS
         return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_discipline_categories(request):
+    try:
+        categories = DisciplineCategory.objects.filter(is_active=True).order_by('category_name')
+        serializer = DisciplineCategorySerializer(categories, many=True)
+        return Response({'success': True, 'data': serializer.data})
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=500)
+    
+@api_view(['POST', 'GET'])
+@permission_classes([IsAuthenticated])
+def create_discipline_category(request):
+    try:
+        serializer = DisciplineCategorySerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({'success': False, 'error': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        
+        category = serializer.save()
+        return Response({
+            'success': True,
+            'data': DisciplineCategorySerializer(category).data,
+            'message': 'Category created successfully'
+        }, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
@@ -135,6 +165,18 @@ def delete_discipline_case(request, case_id):
     except Exception as e:
         return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+
+@api_view(['DELETE'])
+def delete_discipline_category(request, category_id):
+    """Delete a discipline category by its UUID."""
+    category = get_object_or_404(DisciplineCategory, id=category_id)
+    category_name = str(category)  # keep name for success message
+    category.delete()
+    return Response({
+        'success': True,
+        'message': f'Category "{category_name}" deleted successfully'
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -221,7 +263,53 @@ def get_suspensions(request):
     except Exception as e:
         return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_students_list(request):
+    try:
+        from cbe_app.models import Student
+        
+        queryset = Student.objects.select_related('current_class').filter(status='Active', archived=False)
+        
+        search = request.query_params.get('search', '').strip()
+        class_filter = request.query_params.get('class_id', '').strip()
+        
+        if search:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(admission_no__icontains=search)  # was admission_number
+            )
+        if class_filter:
+            queryset = queryset.filter(current_class__id=class_filter)
+        
+        queryset = queryset.order_by('first_name', 'last_name')[:50]
+        
+        data = [{
+            'id': str(s.id),
+            'full_name': f"{s.first_name} {s.last_name}",
+            'admission_number': s.admission_no,  # keep key as admission_number for frontend
+            'class_name': str(s.current_class) if s.current_class else '',
+            'class_id': str(s.current_class.id) if s.current_class else '',
+        } for s in queryset]
+        
+        return Response({'success': True, 'data': data})
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=500)
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_classes_list(request):
+    try:
+        from cbe_app.models import Class
+        
+        classes = Class.objects.filter(is_active=True).order_by('class_name')
+        data = [{'id': str(c.id), 'name': c.class_name} for c in classes]  # was str(c) and c.name
+        return Response({'success': True, 'data': data})
+    except Exception as e:
+        return Response({'success': False, 'error': str(e)}, status=500)
+    
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_discipline_stats(request):
