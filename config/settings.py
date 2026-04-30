@@ -39,21 +39,17 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
+    'cbe_app',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist', # Optional: for logout/revocation
-    'corsheaders',
-    'cbe_app',
-    "channels",
-
-    
+    'corsheaders'
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware', 
+    'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -128,17 +124,7 @@ SIMPLE_JWT = {
 }
 
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'   # adjust to your project structure
-
-# settings.py - add this
-WHITENOISE_MEDIA_PREFIX = '/media/'
-# Max upload size: 50 MB per file, 100 MB total per request
-DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600   # 100 MB
-FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800    #  50 MB
- 
-
- 
+# REST Framework settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -146,13 +132,6 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
-    ],
-    # ← KEY FIX: include MultiPartParser and FileUploadParser globally
-    'DEFAULT_PARSER_CLASSES': [
-        'rest_framework.parsers.JSONParser',
-        'rest_framework.parsers.MultiPartParser',
-        'rest_framework.parsers.FormParser',
-        'rest_framework.parsers.FileUploadParser',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -165,7 +144,6 @@ REST_FRAMEWORK = {
         'user': '1000/hour',
     }
 }
- 
 
 TEMPLATES = [
     {
@@ -198,14 +176,6 @@ DATABASES = {
     )
 }
 
-# settings.py
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer"   # or RedisChannelLayer
-    },
-}
-
-ASGI_APPLICATION = "config.asgi.application"
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -248,7 +218,7 @@ STATICFILES_DIRS = [
 ]
 
 # Static file storage
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
@@ -267,4 +237,4 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL')
 
 AI_API_KEY= config('AI_API_KEY')
 AI_PROVIDER = config('AI_PROVIDER', default='openai')
-AI_MODEL    = config('AI_MODEL', default='gpt-3.5-turbo')
+AI_MODEL = config('AI_MODEL', default='gpt-3.5-turbo')
