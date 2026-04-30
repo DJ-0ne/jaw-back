@@ -40,12 +40,12 @@ urlpatterns = [
     path('teacher/jss/', include('cbe_app.urls.teacher_urls.teacher_jssentry_urls')),
     path('teacher/competency/', include('cbe_app.urls.teacher_urls.teacher_competency_urls')),
     path('teacher/evidence/', include('cbe_app.urls.teacher_urls.teacher_evidence_urls')),
+    path('teacher/exams/', include('cbe_app.urls.teacher_urls.teacher_exam_urls')),
+    path('teacher/dashboard/', include('cbe_app.urls.teacher_urls.teacher_dashboard_urls')),
     
     ##########################PRINCIPAL URLS######################## 
     path('principal/', include('cbe_app.urls.schooladmin_urls.principal_urls')),
     
-   
-    
-    
+    ##########################MESSAGING URLS########################
     path('notifications/', include('cbe_app.urls.messaging_urls.messaging_urls')),
 ]

@@ -32,7 +32,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             'address', 'city', 'country', 'phone', 'email',
             
             # Academic Info
-            'current_class', 'current_class_name', 'stream', 'roll_number',
+            'current_class', 'current_class_name', 'roll_number',
             'admission_date', 'admission_type', 'status',
             
             # Guardian Info

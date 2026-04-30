@@ -1,6 +1,7 @@
 from django.urls import path
 from cbe_app.views.auth_views.auth_views import *
 from cbe_app.services.email.otp_service import *
+from cbe_app.views.student_views.student_profile_views import get_user_info
 urlpatterns = [
     # Authentication endpoints
     path('register/', register, name='register'),
@@ -13,6 +14,8 @@ urlpatterns = [
     # Session management
     path('sessions/', get_active_sessions, name='get_sessions'),
     path('sessions/<uuid:session_id>/revoke/', revoke_session, name='revoke_session'),
+    
+    path('user/', get_user_info, name='auth-user-info'), 
     
     # OTP endpoints for force logout
     path('resend-force-logout-otp/', resend_force_logout_otp, name='resend_force_logout_otp'),

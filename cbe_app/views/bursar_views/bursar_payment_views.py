@@ -75,19 +75,11 @@ def create_audit_log(request, action, model_name, record_id, old_values=None, ne
         logger.error(f"Failed to create audit log: {str(e)}")
 
 
+from django.db.models import Q
+
 def generate_invoice_for_student(student, academic_year, term, request=None):
     """Generate invoice for a student based on current term fee structure"""
     try:
-        fee_structures = FeeStructure.objects.filter(
-            class_id=student.current_class,
-            academic_year=academic_year.year_code,
-            term=term.term,
-            is_active=True
-        ).select_related('category')
-        
-        if not fee_structures.exists():
-            return None
-        
         existing_invoice = StudentFeeInvoice.objects.filter(
             student=student,
             academic_year=academic_year.year_code,
@@ -96,6 +88,25 @@ def generate_invoice_for_student(student, academic_year, term, request=None):
         
         if existing_invoice:
             return existing_invoice
+
+        # Normalize term value - handle both "Term 1" and "1" formats
+        term_value = term.term  # e.g. "Term 1"
+        term_number = term_value.replace("Term ", "").strip()  # e.g. "1"
+
+        fee_structures = FeeStructure.objects.filter(
+            class_id=student.current_class,
+            academic_year=academic_year.year_code,
+            is_active=True
+        ).filter(
+            Q(term=term_value) | Q(term=term_number)
+        ).select_related('category')
+        
+        if not fee_structures.exists():
+            logger.warning(
+                f"No fee structure found for class={student.current_class}, "
+                f"academic_year={academic_year.year_code}, term={term_value}"
+            )
+            return None
         
         total_amount = sum(fs.amount for fs in fee_structures)
         
@@ -134,7 +145,7 @@ def generate_invoice_for_student(student, academic_year, term, request=None):
     except Exception as e:
         logger.error(f"Error generating invoice: {str(e)}")
         return None
-
+    
 
 def get_student_credit_balance(student):
     """Get student's credit balance from previous excess payments"""
@@ -243,10 +254,15 @@ def check_invoice_status(request, student_id):
                 }
             }, status=status.HTTP_200_OK)
         
+        # Wherever you query StudentFeeInvoice by term, use the same pattern:
+        term_value = term.term
+        term_number = term_value.replace("Term ", "").strip()
+
         invoice = StudentFeeInvoice.objects.filter(
             student=student,
             academic_year=academic_year.year_code,
-            term=term.term
+        ).filter(
+            Q(term=term_value) | Q(term=term_number)
         ).first()
         
         return Response({
@@ -428,11 +444,14 @@ def process_payment(request):
         ).first()
         
         if not invoice:
-            invoice = generate_invoice_for_student(student, academic_year, term, request)
+            invoice = generate_invoice_for_student(
+                student, academic_year, term, request,
+                fallback_amount=amount  # creates invoice with payment amount as total
+            )
             if not invoice:
                 return Response({
                     'success': False,
-                    'error': f'No fee structure configured for class {student.current_class.class_name}'
+                    'error': f'Failed to create invoice for {student.current_class.class_name}. Please contact admin.'
                 }, status=status.HTTP_400_BAD_REQUEST)
         
         with transaction.atomic():

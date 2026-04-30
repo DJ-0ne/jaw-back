@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Avg
+from django.db.models import Q, Avg
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -10,7 +10,7 @@ import os
 import logging
 
 from cbe_app.models import (
-    Class, Student, Staff, ClassSubjectAllocation, 
+    Class, LearningArea, Student, Staff, ClassSubjectAllocation, 
     Term, AcademicYear, AttendanceSession, StudentAttendance,
     Exam, ExamResult, StudentPortfolio, Competency
 )
@@ -59,8 +59,8 @@ class TeacherMyClassesView(APIView):
                 'error': str(e)
             }, status=500)
 
-
 class TeacherSubjectClassesView(APIView):
+    """Get classes where teacher teaches a subject OR is class teacher"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
@@ -69,22 +69,65 @@ class TeacherSubjectClassesView(APIView):
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'Your user account is not linked to any staff profile.'
+                    'message': 'No staff profile linked'
                 }, status=200)
             
             staff = request.user.staff_profile
             
-            # Get all allocations for this teacher - NO academic year filter
-            allocations = ClassSubjectAllocation.objects.filter(
+            # Get classes where teacher is class teacher (even without subject assignment)
+            class_teacher_classes = Class.objects.filter(
+                class_teacher=staff,
+                is_active=True
+            )
+            
+            # Get classes where teacher has subject allocation
+            allocated_classes = ClassSubjectAllocation.objects.filter(
                 teacher=staff
             ).select_related('class_id', 'subject')
             
-            serializer = SubjectClassSerializer(allocations, many=True)
+            # Combine unique classes
+            classes_dict = {}
+            
+            # Add class teacher classes
+            for cls in class_teacher_classes:
+                classes_dict[cls.id] = {
+                    'id': str(cls.id),
+                    'class_id': str(cls.id),
+                    'class_name': cls.class_name,
+                    'class_code': cls.class_code,
+                    'stream': cls.stream or '',
+                    'numeric_level': cls.numeric_level,
+                    'subject_name': 'Class Teacher (All Subjects)',  # Show all subjects
+                    'subject_id': None,
+                    'subject_code': None,
+                    'students_count': cls.current_students.filter(status='Active').count(),
+                    'is_class_teacher': True  # Flag to identify
+                }
+            
+            # Add subject allocated classes
+            for alloc in allocated_classes:
+                if alloc.class_id:
+                    key = f"{alloc.class_id.id}_{alloc.subject.id if alloc.subject else 'all'}"
+                    classes_dict[key] = {
+                        'id': str(alloc.class_id.id),
+                        'class_id': str(alloc.class_id.id),
+                        'class_name': alloc.class_id.class_name,
+                        'class_code': alloc.class_id.class_code,
+                        'stream': alloc.class_id.stream or '',
+                        'numeric_level': alloc.class_id.numeric_level,
+                        'subject_name': alloc.subject.area_name if alloc.subject else 'General',
+                        'subject_id': str(alloc.subject.id) if alloc.subject else None,
+                        'subject_code': alloc.subject.area_code if alloc.subject else None,
+                        'students_count': alloc.class_id.current_students.filter(status='Active').count(),
+                        'is_class_teacher': False
+                    }
+            
+            data = list(classes_dict.values())
             
             return Response({
                 'success': True,
-                'data': serializer.data,
-                'message': f'Found {len(serializer.data)} subject classes'
+                'data': data,
+                'message': f'Found {len(data)} classes'
             })
             
         except Exception as e:
@@ -97,6 +140,7 @@ class TeacherSubjectClassesView(APIView):
 
 
 class ClassStudentsView(APIView):
+    """Get students for a specific class"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request, class_id):
@@ -105,7 +149,7 @@ class ClassStudentsView(APIView):
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'Your user account is not linked to any staff profile.'
+                    'message': 'No staff profile linked'
                 }, status=200)
             
             staff = request.user.staff_profile
@@ -116,23 +160,24 @@ class ClassStudentsView(APIView):
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'Class not found.'
+                    'message': 'Class not found'
                 }, status=404)
             
-            # Check access
+            # Check access - teacher is class teacher OR teaches a subject in this class
             has_access = False
             if class_obj.class_teacher == staff:
                 has_access = True
             if not has_access:
                 has_access = ClassSubjectAllocation.objects.filter(
-                    class_id=class_obj, teacher=staff
+                    class_id=class_obj, 
+                    teacher=staff
                 ).exists()
             
             if not has_access:
                 return Response({
                     'success': False,
                     'data': [],
-                    'message': 'You do not have access to this class.'
+                    'message': 'You do not have access to this class'
                 }, status=403)
             
             students = Student.objects.filter(
@@ -141,13 +186,59 @@ class ClassStudentsView(APIView):
                 archived=False
             ).order_by('first_name', 'last_name')
             
-            # FIXED: Pass class_obj in context
-            serializer = StudentListSerializer(students, many=True, context={'class_obj': class_obj})
+            # Calculate scores for each student
+            current_term = Term.objects.filter(is_current=True).first()
+            student_data = []
+            
+            for student in students:
+                # Calculate current score
+                current_score = 0
+                if current_term:
+                    summaries = student.termly_summaries.filter(term=current_term)
+                    if summaries.exists():
+                        avg_internal = summaries.aggregate(avg=Avg('final_internal_value'))['avg']
+                        if avg_internal:
+                            current_score = round(float(avg_internal) / 8 * 100)
+                
+                # Calculate attendance rate
+                attendance_rate = 0
+                if current_term:
+                    sessions = AttendanceSession.objects.filter(
+                        session_date__gte=current_term.start_date,
+                        session_date__lte=current_term.end_date,
+                        class_id=class_obj
+                    )
+                    total_sessions = sessions.count()
+                    if total_sessions > 0:
+                        present_count = student.attendance_records.filter(
+                            session__in=sessions,
+                            attendance_status='Present'
+                        ).count()
+                        attendance_rate = round((present_count / total_sessions) * 100)
+                
+                # Get last assessment score
+                last_assessment = 0
+                last_result = student.exam_results.order_by('-marked_at').first()
+                if last_result:
+                    last_assessment = round(float(last_result.percentage))
+                
+                student_data.append({
+                    'id': str(student.id),
+                    'admission_no': student.admission_no or 'N/A',
+                    'first_name': student.first_name,
+                    'last_name': student.last_name,
+                    'full_name': student.full_name,
+                    'gender': student.gender or 'N/A',
+                    'current_score': current_score,
+                    'attendance_rate': attendance_rate,
+                    'last_assessment': last_assessment,
+                    'target_level': 'ME'
+                })
             
             return Response({
                 'success': True,
-                'data': serializer.data,
-                'message': f'Found {len(serializer.data)} students'
+                'data': student_data,
+                'message': f'Found {len(student_data)} students'
             })
             
         except Exception as e:
@@ -336,7 +427,6 @@ class TakeAttendanceView(APIView):
                 'error': str(e)
             }, status=500)
 
-
 class SaveAssessmentView(APIView):
     permission_classes = [IsAuthenticated]
     
@@ -351,35 +441,122 @@ class SaveAssessmentView(APIView):
         try:
             data = serializer.validated_data
             
+            # Get the class object to determine grade level
+            class_id = data.get('class_id')
+            try:
+                class_obj = Class.objects.get(id=class_id)
+            except Class.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'Class not found'
+                }, status=404)
+            
+            # Map numeric_level to grade_level string (Exam model's GRADE_LEVEL_CHOICES)
+            numeric_level = class_obj.numeric_level
+            if numeric_level == 0:
+                if class_obj.class_name.lower().startswith('pp1'):
+                    grade_level = 'pp1'
+                else:
+                    grade_level = 'pp2'
+            else:
+                grade_level = str(numeric_level)
+            
+            # Get subject learning area
+            subject_name = data['subject']
+            try:
+                subject = LearningArea.objects.filter(
+                    Q(area_name=subject_name) | Q(area_code=subject_name)
+                ).first()
+                if not subject:
+                    subject = LearningArea.objects.create(
+                        area_code=subject_name[:10].upper(),
+                        area_name=subject_name,
+                        area_type='Core',
+                        is_active=True
+                    )
+            except Exception:
+                subject = None
+            
+            # Get current term from database
+            current_term = Term.objects.filter(is_current=True).first()
+            term_number = 1
+            if current_term:
+                term_number = int(current_term.term.split()[-1]) if current_term.term else 1
+            
             exam = Exam.objects.create(
                 exam_code=f"ASS-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
                 title=data['title'],
-                exam_type='cba',
-                grade_level='7',
+                exam_type='cba',  # Classroom-Based Assessment
+                grade_level=grade_level,  # DYNAMIC from actual class
                 academic_year=timezone.now().year,
-                term=1,
+                term=term_number,  # DYNAMIC from current term
                 total_marks=data['max_score'],
+                passing_marks=int(data['max_score'] * 0.5),  # 50% passing
                 status='published',
-                created_by=request.user
+                created_by=request.user,
+                subjects=[data['subject']]
             )
             
+            saved_count = 0
             for score_data in data['scores']:
                 try:
                     student = Student.objects.get(id=score_data['student_id'])
-                    ExamResult.objects.create(
+                    marks = score_data.get('score', 0)
+                    percentage = (marks / data['max_score']) * 100 if data['max_score'] > 0 else 0
+                    
+                    # Calculate grade based on grade level (using exam's grade_level)
+                    if grade_level in ['pp1', 'pp2', '1', '2', '3', '4', '5']:
+                        if percentage >= 90:
+                            grade = 'EE'
+                        elif percentage >= 75:
+                            grade = 'ME'
+                        elif percentage >= 58:
+                            grade = 'AE'
+                        else:
+                            grade = 'BE'
+                    else:
+                        if percentage >= 90:
+                            grade = 'EE1'
+                        elif percentage >= 75:
+                            grade = 'EE2'
+                        elif percentage >= 58:
+                            grade = 'ME1'
+                        elif percentage >= 41:
+                            grade = 'ME2'
+                        elif percentage >= 31:
+                            grade = 'AE1'
+                        elif percentage >= 21:
+                            grade = 'AE2'
+                        elif percentage >= 11:
+                            grade = 'BE1'
+                        else:
+                            grade = 'BE2'
+                    
+                    ExamResult.objects.update_or_create(
                         exam=exam,
                         student=student,
                         subject=data['subject'],
-                        marks_obtained=score_data.get('score', 0),
-                        remarks=score_data.get('feedback', ''),
-                        marked_by=request.user
+                        defaults={
+                            'marks_obtained': marks,
+                            'percentage': round(percentage, 2),
+                            'grade': grade,
+                            'remarks': score_data.get('feedback', ''),
+                            'marked_by': request.user,
+                            'marked_at': timezone.now()
+                        }
                     )
+                    saved_count += 1
                 except Student.DoesNotExist:
                     continue
             
             return Response({
                 'success': True,
-                'message': 'Assessment saved successfully'
+                'message': f'Assessment saved for {saved_count} students in Grade {grade_level}',
+                'data': {
+                    'exam_id': str(exam.id),
+                    'grade_level': grade_level,
+                    'term': term_number
+                }
             })
             
         except Exception as e:
@@ -388,7 +565,6 @@ class SaveAssessmentView(APIView):
                 'success': False,
                 'error': str(e)
             }, status=500)
-
 
 class UploadEvidenceView(APIView):
     permission_classes = [IsAuthenticated]

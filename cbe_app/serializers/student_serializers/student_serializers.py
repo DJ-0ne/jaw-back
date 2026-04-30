@@ -14,7 +14,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             'id', 'admission_no', 'student_uid', 'first_name', 'middle_name', 'last_name',
             'full_name', 'date_of_birth', 'age', 'gender', 'nationality', 'religion',
             'address', 'city', 'country', 'phone', 'email', 'current_class', 'current_class_name',
-            'stream', 'roll_number', 'admission_date', 'admission_type', 'status',
+            'admission_date', 'admission_type', 'status',
             'father_name', 'father_phone', 'father_email', 'mother_name', 'mother_phone',
             'mother_email', 'guardian_name', 'guardian_relation', 'guardian_phone',
             'guardian_email', 'guardian_address', 'medical_conditions', 'allergies',

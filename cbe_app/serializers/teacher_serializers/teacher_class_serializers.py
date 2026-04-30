@@ -124,7 +124,7 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
     max_score = serializers.IntegerField(min_value=1, max_value=1000)
     date = serializers.DateField()
-    class_id = serializers.UUIDField()
+    class_id = serializers.UUIDField(required=True)
     subject = serializers.CharField(max_length=100)
     scores = AssessmentScoreSerializer(many=True)
 
