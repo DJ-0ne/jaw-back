@@ -272,11 +272,10 @@ class UserAdmin(BaseUserAdmin, BaseModelAdmin, ExportCsvMixin):
     
     def get_department(self, obj):
         """Get department from staff profile"""
-        try:
-            if obj.staff_profile and obj.staff_profile.department_assignments.filter(is_primary=True, is_active=True).exists():
-                return obj.staff_profile.department_assignments.filter(is_primary=True, is_active=True).first().department.department_name
-        except:
-            pass
+        if hasattr(obj, 'staff_profile'):
+            primary_dept = obj.staff_profile.department_assignments.filter(is_primary=True, is_active=True).first()
+            if primary_dept:
+                return primary_dept.department.department_name
         return '-'
     get_department.short_description = 'Department'
     get_department.admin_order_field = 'staff_profile__department_assignments__department__department_name'
