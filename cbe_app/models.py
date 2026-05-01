@@ -3293,3 +3293,24 @@ class ClassSubjectAllocation(BaseModel):
         indexes = [
             models.Index(fields=['teacher']),
         ]
+        
+class LessonPlan(BaseModel):
+    """Teacher's lesson plans"""
+    teacher = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='lesson_plans')
+    subject = models.ForeignKey(LearningArea, on_delete=models.CASCADE)
+    grade_level = models.ForeignKey(GradeLevel, on_delete=models.CASCADE)
+    strand = models.ForeignKey(Strand, on_delete=models.SET_NULL, null=True, blank=True)
+    substrand = models.ForeignKey(SubStrand, on_delete=models.SET_NULL, null=True, blank=True)
+    outcome = models.ForeignKey(LearningOutcome, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    topic = models.CharField(max_length=200)
+    objectives = models.JSONField(default=list)
+    activities = models.JSONField(default=list) 
+    resources = models.JSONField(default=list)   
+    assessment = models.TextField(blank=True, null=True)
+    duration = models.IntegerField(default=40)   
+    lesson_date = models.DateField()
+    status = models.CharField(max_length=20, choices=[('planned', 'Planned'), ('completed', 'Completed'), ('cancelled', 'Cancelled')], default='planned')
+    
+    def __str__(self):
+        return f"{self.topic} - {self.lesson_date}"

@@ -8,7 +8,8 @@ import uuid
 from cbe_app.models import (
     Class, Student, Staff, LearningArea, Strand,
     ClassSubjectAllocation, Term, AcademicYear,
-    SummativeAssessment, SummativeRating, AssessmentWindow
+    SummativeAssessment, SummativeRating, AssessmentWindow,
+    WeightConfiguration  # ADD THIS IMPORT
 )
 from cbe_app.serializers.teacher_serializers.teacher_jss_serializers import (
     JSSClassSerializer, JSSStudentSerializer, JSSSubjectSerializer,
@@ -16,6 +17,14 @@ from cbe_app.serializers.teacher_serializers.teacher_jss_serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def get_active_weights():
+    """Get active weight configuration from database"""
+    weight_config = WeightConfiguration.objects.filter(is_active=True).first()
+    if weight_config:
+        return weight_config.sba_weight, weight_config.exam_weight
+    return 40, 60  # Default values
 
 
 def calculate_grade_label(percentage):
@@ -42,10 +51,15 @@ def calculate_grade_label(percentage):
         return 'AB'
 
 
-def calculate_weighted_total(sba_score, exam_score, sba_weight=40, exam_weight=60):
+def calculate_weighted_total(sba_score, exam_score, sba_weight=None, exam_weight=None):
     """Calculate weighted total from SBA and exam scores"""
     if sba_score is None or exam_score is None:
         return None
+    
+    # Get weights from database if not provided
+    if sba_weight is None or exam_weight is None:
+        sba_weight, exam_weight = get_active_weights()
+    
     weighted = (sba_score * sba_weight / 100) + (exam_score * exam_weight / 100)
     return round(weighted * 10) / 10
 
@@ -76,9 +90,11 @@ class JSSClassesView(APIView):
             
             staff = request.user.staff_profile
             
+            # Only get JSS classes (numeric_level 9, 10, 11 which are Grade 7, 8, 9)
             classes = Class.objects.filter(
                 class_teacher=staff,
-                is_active=True
+                is_active=True,
+                numeric_level__in=[9, 10, 11]
             ).order_by('numeric_level', 'stream')
             
             data = []
@@ -105,7 +121,7 @@ class JSSClassesView(APIView):
             return Response({
                 'success': True,
                 'data': data,
-                'message': f'Found {len(data)} classes'
+                'message': f'Found {len(data)} JSS classes'
             })
             
         except Exception as e:
@@ -130,6 +146,14 @@ class JSSStudentsView(APIView):
                     'data': [],
                     'message': 'Class not found'
                 }, status=404)
+            
+            # Check if this is a JSS class (numeric_level 9, 10, 11 for Grade 7, 8, 9)
+            if class_obj.numeric_level not in [9, 10, 11]:
+                return Response({
+                    'success': True,
+                    'data': [],
+                    'message': 'Students in this class are not in JSS. This portal is for Grade 7, 8, and 9 only.'
+                })
             
             students = Student.objects.filter(
                 current_class=class_obj,
@@ -187,14 +211,17 @@ class JSSSubjectsView(APIView):
                 is_active=True
             ).order_by('area_name')
             
+            # Get active weight configuration from database
+            sba_weight, exam_weight = get_active_weights()
+            
             data = []
             for subject in subjects:
                 data.append({
                     'id': subject.area_code,
                     'name': subject.area_name,
                     'code': subject.area_code,
-                    'sba_weight': 40,
-                    'exam_weight': 60
+                    'sba_weight': sba_weight,
+                    'exam_weight': exam_weight
                 })
             
             return Response({
@@ -254,6 +281,9 @@ class JSSMarksRetrieveView(APIView):
             students = Student.objects.filter(current_class=class_obj, status='Active')
             subjects = LearningArea.objects.filter(is_active=True)
             
+            # Get active weights
+            sba_weight, exam_weight = get_active_weights()
+            
             marks_data = {}
             
             for student in students:
@@ -284,7 +314,6 @@ class JSSMarksRetrieveView(APIView):
                                 exam_score = rating_map.get(rating.rating, None)
                     
                     # SBA is calculated from Exam table (CATs and CBAs)
-                    # This part stays the same - SBA comes from exams
                     from cbe_app.models import Exam, ExamResult
                     assessments = Exam.objects.filter(
                         subjects__contains=[subject.area_name],
@@ -307,7 +336,7 @@ class JSSMarksRetrieveView(APIView):
                     weighted_total = None
                     grade_label = None
                     if sba_average is not None and exam_score is not None:
-                        weighted_total = calculate_weighted_total(sba_average, exam_score)
+                        weighted_total = calculate_weighted_total(sba_average, exam_score, sba_weight, exam_weight)
                         grade_label = calculate_grade_label(weighted_total)
                     
                     marks_data[str(student.id)][subject.area_code] = {

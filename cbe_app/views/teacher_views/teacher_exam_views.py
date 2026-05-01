@@ -6,12 +6,11 @@ import uuid
 import logging
 
 from cbe_app.models import (
-    Exam, ExamResult, Student, Class, ClassSubjectAllocation,
+    Exam, ExamMarker, ExamResult, Student, Class, ClassSubjectAllocation,
     Staff, LearningArea
 )
 
 logger = logging.getLogger(__name__)
-
 
 class TeacherExamsListView(APIView):
     """Get exams assigned to teacher for marking"""
@@ -29,24 +28,31 @@ class TeacherExamsListView(APIView):
             staff = request.user.staff_profile
             
             # Get subjects teacher teaches
-            teacher_subjects = ClassSubjectAllocation.objects.filter(
+            teacher_subjects = list(ClassSubjectAllocation.objects.filter(
                 teacher=staff
-            ).values_list('subject__area_name', flat=True).distinct()
+            ).values_list('subject__area_name', flat=True).distinct())
             
             # Get classes teacher teaches
-            teacher_classes = ClassSubjectAllocation.objects.filter(
+            teacher_classes = [str(c) for c in ClassSubjectAllocation.objects.filter(
                 teacher=staff
-            ).values_list('class_id', flat=True).distinct()
+            ).values_list('class_id', flat=True).distinct()]
             
-            # Get exams that are available for marking
-            exams = Exam.objects.filter(
-                status__in=['published', 'live', 'marking'],
-                subjects__overlap=list(teacher_subjects),
-                classes__overlap=[str(c) for c in teacher_classes]
-            ).order_by('-created_at')
+            # Get all exams with matching status first
+            exams = Exam.objects.filter(status__in=['published', 'live', 'marking']).order_by('-created_at')
+            
+            # Filter manually by subjects and classes (bypasses broken __overlap lookup)
+            matching_exams = []
+            for exam in exams:
+                # Check if any teacher subject matches any exam subject
+                subject_match = any(subj in exam.subjects for subj in teacher_subjects) if teacher_subjects else False
+                # Check if any teacher class matches any exam class
+                class_match = any(cls in exam.classes for cls in teacher_classes) if teacher_classes else False
+                
+                if subject_match and class_match:
+                    matching_exams.append(exam)
             
             data = []
-            for exam in exams:
+            for exam in matching_exams:
                 class_name = None
                 if exam.classes and len(exam.classes) > 0:
                     try:
@@ -56,6 +62,10 @@ class TeacherExamsListView(APIView):
                             class_name = f"{class_name} - {class_obj.stream}"
                     except Class.DoesNotExist:
                         pass
+                
+                # Get the subject this teacher is assigned to for this exam
+                marker = ExamMarker.objects.filter(exam=exam, teacher=request.user).first()
+                assigned_subject = marker.subject if marker else None
                 
                 data.append({
                     'id': str(exam.id),
@@ -72,6 +82,7 @@ class TeacherExamsListView(APIView):
                     'end_date': exam.end_date,
                     'className': class_name,
                     'subjects': exam.subjects,
+                    'assigned_subject': assigned_subject,  # ADD THIS
                     'students_count': ExamResult.objects.filter(exam=exam).values('student').distinct().count()
                 })
             
@@ -123,7 +134,7 @@ class TeacherExamScoresView(APIView):
             
             # Get grading scale based on grade level
             grade_level = exam.grade_level
-            is_upper = grade_level in ['6', '7', '8', '9']
+            is_upper = grade_level in ['9', '10', '11']
             
             data = []
             for student in students:
@@ -212,7 +223,7 @@ class TeacherExamScoresBulkSaveView(APIView):
                     if marks_obtained is not None and exam.total_marks > 0:
                         percentage = (marks_obtained / exam.total_marks) * 100
                         # Calculate grade based on exam's grade level
-                        if exam.grade_level in ['6', '7', '8', '9']:
+                        if exam.grade_level in ['9', '10', '11']:
                             if percentage >= 90: grade = 'EE1'
                             elif percentage >= 75: grade = 'EE2'
                             elif percentage >= 58: grade = 'ME1'

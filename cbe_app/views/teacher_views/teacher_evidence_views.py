@@ -8,7 +8,7 @@ import uuid
 import logging
 
 from cbe_app.models import (
-    Student, Class, Staff, StudentPortfolio, CoreCompetency,
+    Strand, Student, Class, Staff, StudentPortfolio, CoreCompetency,
     LearningArea, Term, AcademicYear, ClassSubjectAllocation
 )
 from cbe_app.serializers.teacher_serializers.teacher_evidence_serializers import (
@@ -18,7 +18,6 @@ from cbe_app.serializers.teacher_serializers.teacher_evidence_serializers import
 )
 
 logger = logging.getLogger(__name__)
-
 
 class EvidenceClassesView(APIView):
     permission_classes = [IsAuthenticated]
@@ -60,25 +59,20 @@ class EvidenceClassesView(APIView):
             # Format response
             data = []
             for cls in all_classes.values():
-                # Convert numeric_level to display grade
-                if cls.numeric_level == 9:
-                    display_grade = 7
-                elif cls.numeric_level == 10:
-                    display_grade = 8
-                elif cls.numeric_level == 11:
-                    display_grade = 9
-                else:
-                    display_grade = cls.numeric_level
+                # Use the actual class_name from database, don't reconstruct
+                # Just add stream if it exists
+                display_name = cls.class_name
+                if cls.stream:
+                    display_name = f"{cls.class_name} - {cls.stream}"
                 
-                stream_text = f" - {cls.stream}" if cls.stream else ""
                 data.append({
                     'id': str(cls.id),
                     'class_name': cls.class_name,
                     'class_code': cls.class_code,
                     'stream': cls.stream,
                     'numeric_level': cls.numeric_level,
-                    'grade_level': display_grade,
-                    'class_name_display': f"Grade {display_grade}{stream_text}"
+                    'grade_level': cls.numeric_level,  # Use actual numeric_level
+                    'class_name_display': display_name  # Just the class name + stream
                 })
             
             return Response({
@@ -94,7 +88,6 @@ class EvidenceClassesView(APIView):
                 'data': [],
                 'error': str(e)
             }, status=500)
-
 
 class EvidenceStudentsView(APIView):
     """Get students for a class"""
@@ -133,14 +126,39 @@ class EvidenceStudentsView(APIView):
                 'error': str(e)
             }, status=500)
 
-
 class EvidenceSubjectsView(APIView):
-    """Get subjects for evidence tagging"""
+    """Get subjects for evidence tagging - filtered by grade level"""
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         try:
+            # Get class_id from query params
+            class_id = request.query_params.get('class_id')
+            
+            if not class_id:
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'class_id parameter is required'
+                }, status=400)
+            
+            try:
+                class_obj = Class.objects.get(id=class_id)
+            except Class.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'data': [],
+                    'message': 'Class not found'
+                }, status=404)
+            
+            # Get subjects for this grade level from Strands
+            # Link: Strand -> grade_level -> learning_area
+            subject_ids = Strand.objects.filter(
+                grade_level__level=class_obj.numeric_level
+            ).values_list('learning_area_id', flat=True).distinct()
+            
             subjects = LearningArea.objects.filter(
+                id__in=subject_ids,
                 is_active=True
             ).order_by('area_name')
             
@@ -149,7 +167,7 @@ class EvidenceSubjectsView(APIView):
             return Response({
                 'success': True,
                 'data': data,
-                'message': f'Found {len(data)} subjects'
+                'message': f'Found {len(data)} subjects for Grade {class_obj.numeric_level}'
             })
             
         except Exception as e:
@@ -159,7 +177,6 @@ class EvidenceSubjectsView(APIView):
                 'data': [],
                 'error': str(e)
             }, status=500)
-
 
 class EvidenceCompetenciesView(APIView):
     """Get core competencies for evidence tagging"""

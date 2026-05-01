@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from cbe_app.models import (
-    LearningArea, GradeLevel, Strand, SubStrand, LearningOutcome,
+    LearningArea, GradeLevel, LessonPlan, Strand, SubStrand, LearningOutcome,
     CurriculumVersion, CoreCompetency, CoreValue
 )
 
@@ -67,3 +67,19 @@ class CurriculumVersionSerializer(serializers.ModelSerializer):
         model = CurriculumVersion
         fields = ['id', 'name', 'academic_year', 'is_active', 'is_published', 
                   'published_at', 'created_at']
+        
+class LessonPlanSerializer(serializers.ModelSerializer):
+    subject_name = serializers.CharField(source='subject.area_name', read_only=True)
+    grade_name = serializers.CharField(source='grade_level.name', read_only=True)
+    strand_name = serializers.CharField(source='strand.strand_name', read_only=True, allow_null=True)
+    substrand_name = serializers.CharField(source='substrand.substrand_name', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = LessonPlan
+        fields = [
+            'id', 'topic', 'objectives', 'activities', 'resources', 'assessment',
+            'duration', 'lesson_date', 'status', 'subject_id', 'subject_name',
+            'grade_level_id', 'grade_name', 'strand_id', 'strand_name',
+            'substrand_id', 'substrand_name', 'outcome_id', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

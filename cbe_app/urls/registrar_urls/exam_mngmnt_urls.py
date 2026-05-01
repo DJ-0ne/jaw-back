@@ -8,6 +8,7 @@ urlpatterns = [
     path('delete/<uuid:exam_id>/', views.RegistrarExamDeleteView.as_view(), name='exams-delete'),
     path('schedule/<uuid:exam_id>/', views.RegistrarExamScheduleView.as_view(), name='exams-schedule'),
     path('markers/<uuid:exam_id>/', views.RegistrarExamMarkersView.as_view(), name='exams-markers'),
+    path('getmarkers/<uuid:exam_id>/', views.RegistrarExamMarkersGetView.as_view(), name='exams-markers-get'),
     path('moderate/<uuid:exam_id>/', views.RegistrarExamModerationView.as_view(), name='exams-moderate'),
     path('permissions/<str:scope>/', views.RegistrarExamPermissionsView.as_view(), name='exams-permissions'),
     path('permissions/<str:scope>/<uuid:exam_id>/', views.RegistrarExamPermissionsView.as_view(), name='exams-permissions-exam'),

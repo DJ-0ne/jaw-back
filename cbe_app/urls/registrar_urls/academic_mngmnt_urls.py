@@ -82,9 +82,6 @@ urlpatterns = [
     path('student-portfolios/create/', views.create_student_portfolio, name='create-student-portfolio'),
     path('student-portfolios/<uuid:portfolio_id>/', views.update_student_portfolio, name='update-student-portfolio'),
 
-    path('academic-years/', views.get_academic_years),
-    path('academic-years/create/', views.create_academic_year),
-    path('academic-years/<uuid:year_id>/', views.academic_year_detail),
     # Bulk Operations
     path('bulk-import/', views.bulk_import_curriculum, name='bulk-import-curriculum'),
     path('export/', views.export_curriculum, name='export-curriculum'),

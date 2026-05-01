@@ -13,7 +13,7 @@ from django.http import HttpResponseRedirect
 import json
 
 from .models import (
-    Department, DepartmentStaffAssignment, StudentPortfolio,
+    Department, DepartmentStaffAssignment, LessonPlan, StudentPortfolio,
     # User Management
     User, UserSession, PasswordHistory,
     
@@ -1928,3 +1928,43 @@ class StudentPortfolioAdmin(admin.ModelAdmin):
         if obj.status in ['assessed', 'reviewed'] and not obj.assessed_by:
             obj.assessed_by = request.user
         super().save_model(request, obj, form, change)
+        
+@admin.register(LessonPlan)
+class LessonPlanAdmin(admin.ModelAdmin):
+    list_display = (
+        'topic', 
+        'teacher', 
+        'subject', 
+        'grade_level', 
+        'lesson_date', 
+        'status'
+    )
+    
+    # Filters on the right sidebar
+    list_filter = (
+        'status', 
+        'lesson_date', 
+        'grade_level', 
+        'subject', 
+        'teacher'
+    )
+    
+    # Search box functionality
+    search_fields = ('topic', 'teacher__first_name', 'teacher__last_name', 'subject__name')
+    
+    # Date hierarchy for easy timeline navigation
+    date_hierarchy = 'lesson_date'
+    
+    # Organizing fields into logical sections in the edit form
+    fieldsets = (
+        ('General Information', {
+            'fields': ('teacher', 'topic', 'lesson_date', 'duration', 'status')
+        }),
+        ('Curriculum Context', {
+            'fields': ('subject', 'grade_level', 'strand', 'substrand', 'outcome')
+        }),
+        ('Content & Methodology', {
+            'fields': ('objectives', 'activities', 'resources', 'assessment'),
+            'description': 'Define the core pedagogical elements of the lesson.'
+        }),
+    )

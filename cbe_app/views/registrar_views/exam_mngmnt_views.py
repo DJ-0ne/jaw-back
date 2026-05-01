@@ -24,10 +24,24 @@ class RegistrarExamListView(APIView):
     def get(self, request):
         exams = Exam.objects.all().order_by('-created_at')
         serializer = ExamSerializer(exams, many=True)
+        data = serializer.data
+        
+        # Add markers to each exam
+        for exam_data in data:
+            markers = ExamMarker.objects.filter(exam_id=exam_data['id'])
+            exam_data['markers'] = [
+                {
+                    'id': str(m.teacher.id),
+                    'subject': m.subject,
+                    'teacher_name': f"{m.teacher.first_name} {m.teacher.last_name}"
+                }
+                for m in markers
+            ]
+        
         return Response({
             'success': True,
-            'data': serializer.data,
-            'count': len(serializer.data)
+            'data': data,
+            'count': len(data)
         })
 
 
@@ -81,6 +95,33 @@ class RegistrarExamUpdateView(APIView):
             'error': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
 
+
+class RegistrarExamMarkersGetView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, exam_id):
+        try:
+            exam = Exam.objects.get(id=exam_id)
+        except Exam.DoesNotExist:
+            return Response({
+                'success': False,
+                'data': [],
+                'message': 'Exam not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        markers = ExamMarker.objects.filter(exam=exam).select_related('teacher')
+        data = []
+        for marker in markers:
+            data.append({
+                'id': str(marker.teacher.id),
+                'subject': marker.subject,
+                'teacher_name': f"{marker.teacher.first_name} {marker.teacher.last_name}"
+            })
+        
+        return Response({
+            'success': True,
+            'data': data
+        })
 
 class RegistrarExamDeleteView(APIView):
     permission_classes = [IsAuthenticated]
