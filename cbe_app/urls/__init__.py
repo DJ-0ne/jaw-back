@@ -17,6 +17,7 @@ urlpatterns = [
     ############################BURSAR URLS########################
     path('bursar/', include('cbe_app.urls.bursar_urls.bursar_payment_urls')),
     path('bursar/records/', include('cbe_app.urls.bursar_urls.payment_records_urls')),
+    path('bursar/students/', include('cbe_app.urls.bursar_urls.bursar_payment_urls')),
     
     ############################HR URLS########################
     path('hr/', include('cbe_app.urls.hr_urls.hr_staff_urls')),
@@ -27,8 +28,12 @@ urlpatterns = [
     path('student/fees/', include('cbe_app.urls.student_urls.student_fee_urls')),  
     path('student/profile/', include('cbe_app.urls.student_urls.student_profile_urls')),
     path('student/chatbot/', include('cbe_app.urls.ml_AI_urls.student_chatbot_urls')),
+    path('student/results/', include('cbe_app.urls.student_urls.student_results_urls')),
+    path('student/exams/', include('cbe_app.urls.student_urls.student_dashboard_urls')),
+    path('student/report-card/', include('cbe_app.urls.student_urls.student_report_urls')),
     
     ########################DEPUTY ADMIN URLS########################
+    path('deputyadmin/', include('cbe_app.urls.school_deputyadmin_urls.teacher_assignment_urls')),
     path('deputyadmin/discipline/', include('cbe_app.urls.school_deputyadmin_urls.discipline_urls')),
     path('deputyadmin/teacher-assignments/', include('cbe_app.urls.school_deputyadmin_urls.teacher_assignment_urls')),
     

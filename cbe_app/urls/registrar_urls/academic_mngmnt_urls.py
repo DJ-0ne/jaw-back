@@ -46,8 +46,7 @@ urlpatterns = [
     # Competencies (Subject-specific within substrands)
     path('competencies/', views.get_competencies, name='get-competencies'),
     path('competencies/create/', views.create_competency, name='create-competency'),
-    path('competencies/<uuid:competency_id>/', views.delete_competency, name='delete-competency'),
-    
+    path('competencies/<uuid:competency_id>/', views.create_core_competency, name='competency-detail'),    
     # KICD Core Competencies (7 cross-cutting)
     path('core-competencies/', views.get_core_competencies, name='get-core-competencies'),
     path('core-competencies/create/', views.create_core_competency, name='create-core-competency'),

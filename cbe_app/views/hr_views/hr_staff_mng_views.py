@@ -43,6 +43,16 @@ def get_staff_list(request):
     try:
         queryset = Staff.objects.select_related('teacher_category').prefetch_related('department_assignments')
         
+        # ---- NEW: Exclude terminated / resigned staff by default ----
+        status_filter = request.query_params.get('status', 'all')
+        if status_filter == 'all':
+            # Default: exclude soft-deleted (Terminated) and Resigned
+            queryset = queryset.exclude(status__in=['Terminated', 'Resigned'])
+        else:
+            # Apply the specific status filter if provided
+            queryset = queryset.filter(status=status_filter)
+        # -------------------------------------------------------------
+
         # Search filter
         search = request.query_params.get('search', '')
         if search:
@@ -68,11 +78,6 @@ def get_staff_list(request):
                 department_assignments__department_id=department,
                 department_assignments__is_active=True
             ).distinct()
-        
-        # Status filter
-        status_filter = request.query_params.get('status', '')
-        if status_filter and status_filter != 'all':
-            queryset = queryset.filter(status=status_filter)
         
         # Pagination
         page = int(request.query_params.get('page', 1))

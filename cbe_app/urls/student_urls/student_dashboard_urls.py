@@ -9,7 +9,8 @@ from cbe_app.views.student_views.student_views import (
     get_academic_performance,
     get_current_performance,
     get_exam_results,
-    get_timetable
+    get_timetable,
+    get_recent_published_exams
 )
 
 urlpatterns = [
@@ -31,6 +32,7 @@ urlpatterns = [
     path('performance/', get_academic_performance, name='student-performance'),
     path('performance/current/', get_current_performance, name='student-current-performance'),
     path('results/', get_exam_results, name='student-results'),
+    path('published/recent/', get_recent_published_exams, name='student-recent-published-exams'),
     
     # Timetable
     path('timetable/', get_timetable, name='student-timetable'),

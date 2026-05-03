@@ -22,28 +22,35 @@ class FeeStructureSerializer(serializers.ModelSerializer):
     numeric_level = serializers.IntegerField(source='class_id.numeric_level', read_only=True)
     frequency = serializers.CharField(source='category.frequency', read_only=True)
     is_mandatory = serializers.BooleanField(source='category.is_mandatory', read_only=True)
-    
+
     class Meta:
         model = FeeStructure
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'updated_at']
-    
+
     def validate(self, data):
-        if data['due_date'] < datetime.now().date():
-            raise serializers.ValidationError("Due date cannot be in the past")
-        
-        # Check for duplicate structure
-        if FeeStructure.objects.filter(
-            academic_year=data['academic_year'],
-            term=data['term'],
-            class_id=data['class_id'],
-            category=data['category']
-        ).exists():
-            raise serializers.ValidationError("Fee structure already exists for this combination")
-        
+        instance = self.instance  # None on create, existing object on update
+
+        # Only check duplicate on CREATE, not on UPDATE
+        if instance is None:
+            academic_year = data.get('academic_year')
+            term = data.get('term')
+            class_id = data.get('class_id')
+            category = data.get('category')
+
+            if all([academic_year, term, class_id, category]):
+                if FeeStructure.objects.filter(
+                    academic_year=academic_year,
+                    term=term,
+                    class_id=class_id,
+                    category=category
+                ).exists():
+                    raise serializers.ValidationError(
+                        "Fee structure already exists for this combination"
+                    )
+
         return data
-
-
+    
 class FeeTransactionSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.full_name', read_only=True)
     admission_no = serializers.CharField(source='student.admission_no', read_only=True)

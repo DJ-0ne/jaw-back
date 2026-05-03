@@ -16,4 +16,5 @@ urlpatterns = [
     # Payment Processing
     path('transactions/create/', views.process_payment, name='process-payment'),
     path('transactions/recent/', views.get_recent_transactions, name='recent-transactions'),
+    path('<uuid:student_id>/recalculate-invoice/', views.recalculate_invoice),
 ]

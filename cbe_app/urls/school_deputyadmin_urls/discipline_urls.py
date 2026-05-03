@@ -13,6 +13,8 @@ urlpatterns = [
     path('categories/create/', views.create_discipline_category, name='create-discipline-category'),
     path('conduct/', views.get_conduct_records, name='get-conduct-records'),
     path('categories/<uuid:category_id>/', views.delete_discipline_category, name='delete-discipline-category'),   # ← NEW
+    path('suspensions/create/', views.create_suspension, name='create-suspension'),
+    path('suspensions/<uuid:suspension_id>/', views.suspension_detail, name='suspension-detail'),
 
     path('dashboard/', get_dashboard_data, name='discipline_dashboard'),
 

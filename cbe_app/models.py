@@ -3157,7 +3157,8 @@ class ExamMarker(BaseModel):
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='markers')
     subject = models.CharField(max_length=100)
     teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='marking_assignments')
-    
+    is_finalized = models.BooleanField(default=False)
+    finalized_at = models.DateTimeField(null=True, blank=True)
     class Meta:
         unique_together = ['exam', 'subject', 'teacher']
     
@@ -3173,6 +3174,7 @@ class ExamModeration(BaseModel):
     notes = models.TextField(blank=True, null=True)
     approved = models.BooleanField(default=False)
     moderated_at = models.DateTimeField(auto_now_add=True)
+    moderated_subjects = models.JSONField(default=list, blank=True)
     
     def __str__(self):
         return f"Moderation for {self.exam.exam_code}"

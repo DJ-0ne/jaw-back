@@ -15,7 +15,9 @@ from cbe_app.serializers.school_deputyadmin_seriliazers.teacher_assignment_seria
     TeacherCategorySerializer, TeacherProfileSerializer, ClassWithStreamSerializer, SubjectSerializer,
     TeacherAssignmentSerializer, CreateAssignmentSerializer
 )
-
+import logging
+import re
+logger = logging.getLogger(__name__)
 
 class QualifiedTeachersView(APIView):
     permission_classes = [IsAuthenticated]
@@ -178,62 +180,73 @@ class TeacherDepartmentsView(APIView):
 
 class CreateTeacherAssignmentView(APIView):
     permission_classes = [IsAuthenticated]
-    
+
     def post(self, request):
         try:
             data = request.data
-            
+
             class_id = data.get('class_id')
             subject_id = data.get('subject_id')
             teacher_staff_id = data.get('teacher_id')
             academic_year = data.get('academic_year')
             periods_per_week = data.get('periods_per_week', 5)
             is_compulsory = data.get('is_compulsory', True)
-            
+
             # Validate required fields
-            if not class_id:
-                return Response({'success': False, 'message': 'class_id is required'}, status=400)
-            if not subject_id:
-                return Response({'success': False, 'message': 'subject_id is required'}, status=400)
-            if not teacher_staff_id:
-                return Response({'success': False, 'message': 'teacher_id is required'}, status=400)
-            
-            # Get the related objects
+            if not all([class_id, subject_id, teacher_staff_id]):
+                return Response(
+                    {'success': False, 'message': 'class_id, subject_id, and teacher_id are all required.'},
+                    status=400
+                )
+
+            # ── Academic year: accept both "2026" and "2026-2027" ──────────
+            if academic_year and not re.match(r'^\d{4}(-\d{4})?$', str(academic_year)):
+                return Response(
+                    {'success': False, 'message': 'academic_year must be YYYY or YYYY-YYYY format.'},
+                    status=400
+                )
+
+            # Fetch related objects
             try:
                 class_obj = Class.objects.get(id=class_id, is_active=True)
             except Class.DoesNotExist:
-                return Response({'success': False, 'message': 'Class not found'}, status=404)
-            
+                return Response({'success': False, 'message': 'Class not found or inactive.'}, status=404)
+
             try:
                 subject_obj = LearningArea.objects.get(id=subject_id, is_active=True)
             except LearningArea.DoesNotExist:
-                return Response({'success': False, 'message': 'Subject not found'}, status=404)
-            
+                return Response({'success': False, 'message': 'Subject not found or inactive.'}, status=404)
+
             try:
                 staff = Staff.objects.get(id=teacher_staff_id, status='Active')
+                # No longer require staff.user – assignment goes to Staff, not User
             except Staff.DoesNotExist:
-                return Response({'success': False, 'message': 'Teacher not found'}, status=404)
-            
-            # Check for existing assignment
+                return Response({'success': False, 'message': 'Teacher not found or inactive.'}, status=404)
+
+            # Check for existing assignment of the same subject to the same class
             existing = ClassSubjectAllocation.objects.filter(
                 class_id=class_obj,
                 subject=subject_obj,
                 academic_year=academic_year
             ).first()
-            
+
             if existing:
-                return Response({'success': False, 'message': f'Subject already assigned to this class for {academic_year}'}, status=400)
-            
-            # Create assignment - CORRECT WAY
+                return Response(
+                    {'success': False,
+                     'message': f'Subject "{subject_obj.area_name}" is already assigned to this class for {academic_year}.'},
+                    status=400
+                )
+
+            # Create the assignment
             assignment = ClassSubjectAllocation.objects.create(
-                class_id=class_obj,  # Pass the Class object directly
-                subject=subject_obj,  # Pass the LearningArea object directly
-                teacher=staff,  # Pass the Staff object
+                class_id=class_obj,
+                subject=subject_obj,
+                teacher=staff,                # teacher field is a ForeignKey to Staff
                 academic_year=academic_year,
                 periods_per_week=periods_per_week,
                 is_compulsory=is_compulsory
             )
-            
+
             return Response({
                 'success': True,
                 'data': {
@@ -250,15 +263,14 @@ class CreateTeacherAssignmentView(APIView):
                 },
                 'message': 'Teacher assigned successfully'
             })
-            
+
         except Exception as e:
-            print(f"Error: {str(e)}")
-            return Response({
-                'success': False, 
-                'error': str(e), 
-                'message': 'Failed to create assignment'
-            }, status=500)
-            
+            logger.exception("CreateTeacherAssignmentView error")
+            return Response(
+                {'success': False, 'error': str(e), 'message': 'Failed to create assignment.'},
+                status=500
+            )
+          
 class TeacherAssignmentsListView(APIView):
     """Get all teacher assignments with filters"""
     permission_classes = [IsAuthenticated]
@@ -479,4 +491,31 @@ class GradeLevelsInfoView(APIView):
                 'data': None,
                 'error': str(e),
                 'message': 'Failed to retrieve grade levels'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+
+class AcademicYearsListView(APIView):
+    """Return all academic years for assignment selection"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            years = AcademicYear.objects.all().order_by('-start_date')
+            data = [{
+                'id': str(y.id),
+                'year_code': y.year_code,
+                'year_name': y.year_name,
+                'is_current': y.is_current
+            } for y in years]
+            return Response({
+                'success': True,
+                'data': data,
+                'message': f'Found {len(data)} academic years'
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'data': [],
+                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

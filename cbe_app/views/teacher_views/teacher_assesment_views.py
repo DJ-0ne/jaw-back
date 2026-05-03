@@ -169,7 +169,6 @@ class TeacherCreateAssessmentView(APIView):
         try:
             data = serializer.validated_data
             
-            # Get the specific class (stream)
             try:
                 class_obj = Class.objects.get(id=data['classId'])
             except Class.DoesNotExist:
@@ -186,7 +185,6 @@ class TeacherCreateAssessmentView(APIView):
                     'error': 'Subject not found'
                 }, status=404)
             
-            # Create exam
             exam_type_map = {
                 'cat': 'cat',
                 'assignment': 'cba',
@@ -194,13 +192,19 @@ class TeacherCreateAssessmentView(APIView):
                 'exam': 'end_term'
             }
             
-            # Get current term and academic year
             current_term = Term.objects.filter(is_current=True).first()
             term_number = 1
-            academic_year = 2025
+            academic_year = 2026              # fallback
+            
             if current_term:
                 term_number = int(current_term.term.split()[-1]) if current_term.term else 1
-                academic_year = int(current_term.academic_year.year_code.split('-')[0]) if current_term.academic_year else 2025
+                year_code = current_term.academic_year.year_code if current_term.academic_year else '2026'
+                if '-' in year_code:
+                    # "2025-2026" → 2026
+                    parts = year_code.split('-')
+                    academic_year = max(int(parts[0]), int(parts[1]))
+                else:
+                    academic_year = int(year_code)
             
             exam = Exam.objects.create(
                 exam_code=f"ASS-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
@@ -213,7 +217,7 @@ class TeacherCreateAssessmentView(APIView):
                 academic_year=academic_year,
                 status='draft' if not data.get('published', False) else 'published',
                 created_by=request.user,
-                classes=[str(class_obj.id)],  # Save the actual class ID, not grade level
+                classes=[str(class_obj.id)],
                 subjects=[subject_obj.area_name]
             )
             
@@ -229,7 +233,7 @@ class TeacherCreateAssessmentView(APIView):
                 'success': False,
                 'error': str(e)
             }, status=500)
-
+            
 class TeacherAssessmentStudentsView(APIView):
     """Get students for a specific assessment (for grading)"""
     permission_classes = [IsAuthenticated]
@@ -299,70 +303,67 @@ class TeacherAssessmentStudentsView(APIView):
 
 
 class TeacherSaveGradesView(APIView):
-    """Save grades for an assessment"""
+    """Save grades for an assessment — stores subject on every ExamResult row"""
     permission_classes = [IsAuthenticated]
-    
+
     def post(self, request, assessment_id):
         serializer = SaveGradesSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response({
-                'success': False,
-                'error': serializer.errors
-            }, status=400)
-        
+            return Response({'success': False, 'error': serializer.errors}, status=400)
+
         try:
             exam = Exam.objects.filter(id=assessment_id, created_by=request.user).first()
             if not exam:
-                return Response({
-                    'success': False,
-                    'message': 'Assessment not found'
-                }, status=404)
-            
+                return Response({'success': False, 'message': 'Assessment not found'}, status=404)
+
             data = serializer.validated_data
             saved_count = 0
-            
+
+            # Resolve the subject this exam belongs to
+            # exam.subjects is a list e.g. ["English"] set at creation time
+            exam_subject = ''
+            if exam.subjects and isinstance(exam.subjects, list):
+                clean = [s.strip() for s in exam.subjects if s and s.strip()]
+                if len(clean) == 1:
+                    exam_subject = clean[0]
+
             for grade in data['grades']:
                 if grade['score'] is None or grade['score'] == '':
                     continue
-                
+
                 try:
                     student = Student.objects.get(id=grade['studentId'])
                 except Student.DoesNotExist:
                     continue
-                
-                # Get or create result
-                result, created = ExamResult.objects.update_or_create(
+
+                ExamResult.objects.update_or_create(
                     exam=exam,
                     student=student,
                     defaults={
                         'marks_obtained': grade['score'],
+                        # ── KEY FIX: always persist the subject on the result row ──
+                        'subject': exam_subject,
                         'remarks': grade.get('feedback', ''),
                         'marked_by': request.user,
-                        'marked_at': timezone.now()
+                        'marked_at': timezone.now(),
                     }
                 )
                 saved_count += 1
-            
-            # Update assessment status if all students are graded
-            total_students = ExamResult.objects.filter(exam=exam).count()
-            if total_students > 0:
+
+            if ExamResult.objects.filter(exam=exam).exists():
                 exam.status = 'ongoing'
                 exam.save()
-            
+
             return Response({
                 'success': True,
                 'message': f'Saved {saved_count} grades',
-                'saved_count': saved_count
+                'saved_count': saved_count,
             })
-            
+
         except Exception as e:
             logger.error(f"TeacherSaveGradesView error: {str(e)}")
-            return Response({
-                'success': False,
-                'error': str(e)
-            }, status=500)
-
-
+            return Response({'success': False, 'error': str(e)}, status=500)
+        
 class TeacherAssessmentResultsView(APIView):
     """Get assessment results for analytics"""
     permission_classes = [IsAuthenticated]
@@ -503,3 +504,36 @@ class TeacherPublishAssessmentView(APIView):
                 'success': False,
                 'error': str(e)
             }, status=500)
+        
+
+class TeacherCompleteAssessmentView(APIView):
+    """Mark an ongoing assessment as completed"""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, assessment_id):
+        try:
+            exam = Exam.objects.filter(id=assessment_id, created_by=request.user).first()
+            if not exam:
+                return Response({'success': False, 'message': 'Assessment not found'}, status=404)
+
+            if exam.status != 'ongoing':
+                return Response({
+                    'success': False,
+                    'message': 'Only ongoing assessments can be marked as completed'
+                }, status=400)
+
+            # Ensure at least one result exists before allowing completion
+            if not ExamResult.objects.filter(exam=exam).exists():
+                return Response({
+                    'success': False,
+                    'message': 'Please save grades before completing the assessment'
+                }, status=400)
+
+            exam.status = 'completed'
+            exam.save()
+
+            return Response({'success': True, 'message': 'Assessment marked as completed'})
+
+        except Exception as e:
+            logger.error(f"TeacherCompleteAssessmentView error: {str(e)}")
+            return Response({'success': False, 'error': str(e)}, status=500)

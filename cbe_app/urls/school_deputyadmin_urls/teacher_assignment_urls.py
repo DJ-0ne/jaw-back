@@ -11,7 +11,8 @@ from cbe_app.views.school_deputyadmin_views.teacher_assignment_views import (
     DeleteTeacherAssignmentView,
     TeacherCategoriesView,
     GradeLevelsInfoView,
-    UpdateTeacherAssignmentView
+    UpdateTeacherAssignmentView,
+    AcademicYearsListView,
 )
 
 urlpatterns = [
@@ -25,4 +26,5 @@ urlpatterns = [
     path('assignments/<uuid:assignment_id>/delete/', DeleteTeacherAssignmentView.as_view(), name='delete-teacher-assignment'),
     path('teacher-categories/', TeacherCategoriesView.as_view(), name='teacher-categories'),
     path('grade-levels-info/', GradeLevelsInfoView.as_view(), name='grade-levels-info'),
+    path('teacher-assignments/academic-years/', AcademicYearsListView.as_view(), name='assignment-academic-years'),
 ]

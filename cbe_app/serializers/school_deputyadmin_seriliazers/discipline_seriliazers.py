@@ -1,3 +1,5 @@
+# cbe_app/serializers/school_deputyadmin_seriliazers/discipline_seriliazers.py
+
 from rest_framework import serializers
 from django.utils import timezone
 from datetime import timedelta
@@ -22,14 +24,19 @@ class DisciplineCategoryCreateSerializer(serializers.ModelSerializer):
         model = DisciplineCategory
         fields = ['category_name', 'severity_level', 'default_points', 'is_active']
 
+    def validate(self, data):
+        for _ in range(10):
+            code = f"CAT-{uuid.uuid4().hex[:6].upper()}"
+            if not DisciplineCategory.objects.filter(category_code=code).exists():
+                data['category_code'] = code
+                return data
+        data['category_code'] = f"CAT-{uuid.uuid4().hex.upper()[:16]}"
+        return data
+
     def create(self, validated_data):
-        # Generate unique category_code (model requires it)
-        date_part = timezone.now().strftime('%Y%m%d')
-        random_part = uuid.uuid4().hex[:4].upper()
-        validated_data['category_code'] = f"CAT-{date_part}-{random_part}"
         return super().create(validated_data)
-
-
+    
+    
 # ---------- Student Discipline Points ----------
 class StudentDisciplinePointsSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.full_name', read_only=True)
@@ -131,12 +138,10 @@ class InterventionProgramCreateSerializer(serializers.ModelSerializer):
         }
     
     def create(self, validated_data):
-        # Generate unique program_code
         date_part = timezone.now().strftime('%Y%m%d')
         random_part = uuid.uuid4().hex[:4].upper()
         validated_data['program_code'] = f"PRG-{date_part}-{random_part}"
         
-        # Calculate end_date from start_date + duration_weeks
         start_date = validated_data.get('start_date')
         weeks = validated_data.get('duration_weeks', 4)
         if start_date:
@@ -175,11 +180,9 @@ class CounselingSessionCreateSerializer(serializers.ModelSerializer):
         }
     
     def create(self, validated_data):
-        # Generate unique session_code
         date_part = timezone.now().strftime('%Y%m%d')
         random_part = uuid.uuid4().hex[:4].upper()
         validated_data['session_code'] = f"SES-{date_part}-{random_part}"
-        
         validated_data['counselor'] = self.context['request'].user
         return super().create(validated_data)
 
@@ -189,13 +192,44 @@ class SuspensionSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.full_name', read_only=True)
     grade = serializers.CharField(source='student.current_class.class_name', read_only=True, allow_null=True)
     assigned_by_name = serializers.CharField(source='assigned_by.get_full_name', read_only=True)
-    
+
     class Meta:
         model = Suspension
-        fields = ['id', 'suspension_code', 'student', 'student_name', 'grade', 'incident',
-                  'suspension_type', 'start_date', 'end_date', 'total_days', 'reason',
-                  'assigned_by', 'assigned_by_name', 'status', 'parent_notified',
-                  'parent_notification_date', 'reentry_meeting_date', 'notes']
+        fields = [
+            'id', 'suspension_code', 'student', 'student_name', 'grade', 'incident',
+            'suspension_type', 'start_date', 'end_date', 'total_days', 'reason',
+            'assigned_by', 'assigned_by_name', 'status', 'parent_notified',
+            'parent_notification_date', 'reentry_meeting_date', 'notes'
+        ]
+        read_only_fields = [
+            'id',                    # never allow changing the PK
+            'suspension_code',      # auto‑generated
+            'total_days',           # calculated automatically by the model’s save()
+            'assigned_by',          # set once on creation
+        ]
+        
+class SuspensionCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Suspension
+        fields = ['student', 'incident', 'suspension_type', 'start_date', 'end_date', 'reason', 'notes', 'parent_notified']
+        extra_kwargs = {
+            'incident': {'required': False},
+            'notes': {'required': False},
+            'parent_notified': {'required': False, 'default': False},
+        }
+
+    def create(self, validated_data):
+        date_part = timezone.now().strftime('%Y%m%d')
+        random_part = uuid.uuid4().hex[:4].upper()
+        validated_data['suspension_code'] = f"SUS-{date_part}-{random_part}"
+        validated_data['assigned_by'] = self.context['request'].user
+        start = validated_data.get('start_date')
+        end = validated_data.get('end_date')
+        if start and end:
+            validated_data['total_days'] = (end - start).days + 1
+        else:
+            validated_data['total_days'] = 0
+        return super().create(validated_data)
 
 
 # ---------- Stats ----------

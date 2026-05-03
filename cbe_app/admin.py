@@ -337,8 +337,10 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
     search_fields = ['admission_no', 'first_name', 'middle_name', 'last_name', 
                     'upi_number', 'knec_number', 'birth_certificate_no',
                     'guardian_phone', 'guardian_email']
-    readonly_fields = ['id', 'student_uid', 'created_at', 'updated_at', 'full_name_display']
-    
+    readonly_fields = ['id', 'student_uid', 'created_at', 'updated_at', 
+                       'full_name_display', 'created_by_display']   # updated_by removed from readonly
+    raw_id_fields = ['user', 'current_class']   # created_by / updated_by removed from raw_id
+
     fieldsets = (
         ('Student Identification', {
             'fields': ('id', 'student_uid', 'admission_no', 'user', 'full_name_display')
@@ -377,26 +379,60 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
             'fields': ('previous_school', 'previous_class', 'transfer_certificate_no')
         }),
         ('Audit', {
-            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at',
+            'fields': ('created_by_display', 'updated_by', 'created_at', 'updated_at',   # ← updated_by dropdown here
                       'archived', 'archived_at')
         }),
     )
-    
+
     inlines = [StudentAcademicHistoryInline]
     actions = ['export_as_csv', 'activate_students', 'graduate_students', 
               'withdraw_students', 'generate_user_accounts']
-    raw_id_fields = ['user', 'current_class', 'created_by', 'updated_by']
-    
+
+    # ── Custom display for created_by (read‑only) ─────────────────
+    def created_by_display(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.get_full_name()} ({obj.created_by.get_role_display()})"
+        return '-'
+    created_by_display.short_description = 'Created By'
+
     def full_name_display(self, obj):
         return obj.full_name
     full_name_display.short_description = 'Full Name'
-    
+
     def user_link(self, obj):
         if obj.user:
             url = reverse('admin:cbe_app_user_change', args=[obj.user.id])
             return format_html('<a href="{}">{}</a>', url, obj.user.username)
         return '-'
     user_link.short_description = 'User Account'
+
+    # ── Filter the updated_by dropdown to only staff / admin roles ─────────
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == 'updated_by':
+            kwargs['queryset'] = User.objects.filter(
+                role__in=['registrar', 'system_admin', 'principal', 'deputy_principal']
+            ).order_by('first_name', 'last_name')
+            # Show "Full Name (Role)" in the dropdown
+            from django.forms import ModelChoiceField
+            field = ModelChoiceField(
+                queryset=kwargs['queryset'],
+                label='Updated By',
+                required=False,
+            )
+            field.label_from_instance = lambda u: f"{u.get_full_name()} ({u.get_role_display()})"
+            return field
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    # ── save_model: keep created_by auto (first time), updated_by can be manual ─
+    def save_model(self, request, obj, form, change):
+        if not change:  # new record
+            obj.created_by = request.user
+        # If updated_by was NOT changed by the admin, we still auto‑set it to the current user.
+        # (You can remove this line to leave it as the previously stored value)
+        if not form.cleaned_data.get('updated_by'):
+            obj.updated_by = request.user
+        # Otherwise, the admin's selection is kept.
+        super().save_model(request, obj, form, change)
     
     def activate_students(self, request, queryset):
         updated = queryset.update(status='Active', status_changed_date=timezone.now())
@@ -414,31 +450,56 @@ class StudentAdmin(BaseModelAdmin, ExportCsvMixin):
     withdraw_students.short_description = "Withdraw selected students"
     
     def generate_user_accounts(self, request, queryset):
+
         from django.contrib.auth.hashers import make_password
         import secrets
-        
-        count = 0
+
+        created = 0
+        errors = []
+
         for student in queryset:
             if not student.user:
-                # Create user account
-                username = f"student_{student.admission_no.lower().replace('/', '_')}"
+                # Build a safe username
+                adm_num = student.admission_no or 'unknown'
+                base_username = f"student_{adm_num.lower().replace('/', '_').replace('-', '_').replace(' ', '_')}"
+                username = base_username
+                suffix = 1
+                while User.objects.filter(username=username).exists():
+                    username = f"{base_username}{suffix}"
+                    suffix += 1
+
                 password = secrets.token_urlsafe(8)
-                
-                user = User.objects.create_user(
-                    username=username,
-                    password=password,
-                    email=student.email,
-                    first_name=student.first_name,
-                    last_name=student.last_name,
-                    role='student'
-                )
-                student.user = user
-                student.save()
-                count += 1
-                
-                self.message_user(request, f'Created account for {student.full_name} - Username: {username}, Password: {password}', level=messages.INFO)
-        
-        self.message_user(request, f'Created {count} student user accounts.')
+
+                try:
+                    user = User.objects.create_user(
+                        username=username,
+                        password=password,
+                        email=student.email or '',
+                        first_name=student.first_name,
+                        last_name=student.last_name,
+                        role='student'        # must match ROLE_CHOICES
+                    )
+                    # Ensure user_code is generated (if the model's save method does it, fine)
+                    # If needed, explicitly generate: user.user_code = ... ; but rely on model's save.
+                    student.user = user
+                    student.save(update_fields=['user'])
+                    created += 1
+                    self.message_user(
+                        request,
+                        f'Created account for {student.full_name} – Username: {username}, Password: {password}',
+                        level=messages.INFO
+                    )
+                except Exception as e:
+                    errors.append(f"{student.admission_no}: {e}")
+
+        if errors:
+            self.message_user(
+                request,
+                f'{created} accounts created. Errors for {len(errors)} students:\n' + '\n'.join(errors),
+                level=messages.WARNING
+            )
+        else:
+            self.message_user(request, f'Created {created} student user accounts.')
     generate_user_accounts.short_description = "Generate user accounts for selected students"
     
     def save_model(self, request, obj, form, change):

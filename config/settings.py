@@ -175,7 +175,11 @@ DATABASES = {
         ssl_require=True
     )
 }
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'   # adjust to your project structure
 
+# settings.py - add this
+WHITENOISE_MEDIA_PREFIX = '/media/'
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators

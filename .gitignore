@@ -1,1 +1,6 @@
 .env
+*venv
+*ven*
+ven
+pycache
+__pycache__

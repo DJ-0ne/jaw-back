@@ -9,7 +9,8 @@ from cbe_app.views.teacher_views.teacher_assesment_views import (
     TeacherSaveGradesView,
     TeacherAssessmentResultsView,
     TeacherDeleteAssessmentView,
-    TeacherUpdateAssessmentView
+    TeacherUpdateAssessmentView,
+    TeacherCompleteAssessmentView,
 )
 
 urlpatterns = [
@@ -24,4 +25,5 @@ urlpatterns = [
     path('<uuid:assessment_id>/delete/', TeacherDeleteAssessmentView.as_view(), name='teacher-assessment-delete'),
     path('<uuid:assessment_id>/update/', TeacherUpdateAssessmentView.as_view(), name='teacher-assessment-update'),
     path('<uuid:assessment_id>/publish/', TeacherPublishAssessmentView.as_view(), name='teacher-assessment-publish'),
+    path('<uuid:assessment_id>/complete/', TeacherCompleteAssessmentView.as_view(), name='teacher-assessment-complete'),
 ]

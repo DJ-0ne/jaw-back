@@ -436,7 +436,8 @@ def generate_admission_number_view(request):
 @permission_classes([IsAuthenticated])
 def import_students(request):
     """
-    Import students from Excel file with new format and NEMIS fields
+    Import students from Excel file with new format and NEMIS fields.
+    Accepts class names (e.g., 'Grade 7 North') or UUIDs for current_class.
     """
     try:
         if request.user.role not in ['registrar', 'system_admin']:
@@ -444,21 +445,20 @@ def import_students(request):
                 'success': False,
                 'error': 'You do not have permission to import students'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         if 'excelFile' not in request.FILES:
             return Response({
                 'success': False,
                 'error': 'No file uploaded'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         excel_file = request.FILES['excelFile']
-        
         if not excel_file.name.endswith(('.xlsx', '.xls')):
             return Response({
                 'success': False,
                 'error': 'Invalid file format. Please upload .xlsx or .xls file'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         try:
             df = pd.read_excel(excel_file)
         except Exception as e:
@@ -466,8 +466,38 @@ def import_students(request):
                 'success': False,
                 'error': f'Failed to read Excel file: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Updated field mapping with NEMIS fields
+
+        # Helper to resolve class from name/stream or UUID
+        def resolve_class(value):
+            if not value or pd.isna(value):
+                return None, None
+            val = str(value).strip()
+            # Try direct UUID match first
+            try:
+                cls = Class.objects.filter(id=val).first()
+                if cls:
+                    return cls.id, cls.class_name
+            except Exception:
+                pass
+            # Try parsing as "Class Name - Stream" or just "Class Name"
+            # Allowed separators: " - " or " -" or "-"
+            parts = re.split(r'\s*-\s*', val, maxsplit=1)
+            name = parts[0].strip()
+            stream = parts[1].strip() if len(parts) > 1 else None
+            filters = Q(class_name__iexact=name)
+            if stream:
+                filters &= Q(stream__iexact=stream)
+            else:
+                # If no stream, prefer the unstreamed class, else first match
+                cls_qs = Class.objects.filter(class_name__iexact=name)
+                if cls_qs.filter(stream__isnull=True).exists():
+                    filters &= Q(stream__isnull=True)
+            cls_obj = Class.objects.filter(filters).first()
+            if cls_obj:
+                return cls_obj.id, cls_obj.class_name
+            return None, val
+
+        # Field mapping
         field_mapping = {
             'upi_number': 'upi_number',
             'knec_number': 'knec_number',
@@ -512,7 +542,11 @@ def import_students(request):
             'transfer_certificate_no': 'transfer_certificate_no',
             'status': 'status',
         }
-        
+
+        imported_count = 0
+        errors = []
+
+        # Build students data list
         students_data = []
         for _, row in df.iterrows():
             student_dict = {}
@@ -523,116 +557,90 @@ def import_students(request):
                         student_dict[model_field] = None
                     else:
                         student_dict[model_field] = value
-            
             student_dict['created_by'] = request.user.id
             students_data.append(student_dict)
-        
-        imported_count = 0
-        errors = []
-        
+
         with transaction.atomic():
-            for index, student_data in enumerate(students_data):
+            for index, student_data in enumerate(students_data, start=1):
                 try:
-                    if student_data.get('email'):
-                        email = student_data['email'].lower().strip()
+                    # Resolve class
+                    class_value = student_data.get('current_class')
+                    class_id, class_display = resolve_class(class_value)
+                    if class_value and not class_id:
+                        errors.append({
+                            'row': index + 1,
+                            'field': 'current_class',
+                            'error': f'Class "{class_value}" not found. Use format "Class Name - Stream" (e.g., "Grade 7 North") or a valid UUID.'
+                        })
+                        continue
+                    student_data['current_class'] = class_id
+
+                    # Check duplicates
+                    email = student_data.get('email')
+                    if email:
+                        email = email.lower().strip()
                         if Student.objects.filter(email=email).exists():
-                            errors.append({
-                                'row': index + 2,
-                                'error': f'Email "{email}" already exists',
-                                'data': student_data
-                            })
+                            errors.append({'row': index + 1, 'field': 'email', 'error': f'Email "{email}" already exists'})
                             continue
                         student_data['email'] = email
-                    
-                    if student_data.get('upi_number'):
-                        if Student.objects.filter(upi_number=student_data['upi_number']).exists():
-                            errors.append({
-                                'row': index + 2,
-                                'error': f'UPI number "{student_data["upi_number"]}" already exists',
-                                'data': student_data
-                            })
-                            continue
-                    
-                    if student_data.get('knec_number'):
-                        if Student.objects.filter(knec_number=student_data['knec_number']).exists():
-                            errors.append({
-                                'row': index + 2,
-                                'error': f'KNEC number "{student_data["knec_number"]}" already exists',
-                                'data': student_data
-                            })
-                            continue
-                    
-                    if student_data.get('birth_certificate_no'):
-                        if Student.objects.filter(birth_certificate_no=student_data['birth_certificate_no']).exists():
-                            errors.append({
-                                'row': index + 2,
-                                'error': f'Birth Certificate number "{student_data["birth_certificate_no"]}" already exists',
-                                'data': student_data
-                            })
-                            continue
-                    
+
+                    if student_data.get('upi_number') and Student.objects.filter(upi_number=student_data['upi_number']).exists():
+                        errors.append({'row': index + 1, 'field': 'upi_number', 'error': f'UPI "{student_data["upi_number"]}" already exists'})
+                        continue
+
+                    if student_data.get('knec_number') and Student.objects.filter(knec_number=student_data['knec_number']).exists():
+                        errors.append({'row': index + 1, 'field': 'knec_number', 'error': f'KNEC "{student_data["knec_number"]}" already exists'})
+                        continue
+
+                    if student_data.get('birth_certificate_no') and Student.objects.filter(birth_certificate_no=student_data['birth_certificate_no']).exists():
+                        errors.append({'row': index + 1, 'field': 'birth_certificate_no', 'error': f'Birth Certificate "{student_data["birth_certificate_no"]}" already exists'})
+                        continue
+
+                    # Generate admission number if missing
                     if not student_data.get('admission_no'):
                         prefix = 'ADM/JWB'
-                        next_sequence = get_next_admission_sequence(
-                            Student.objects.all(),
-                            prefix=prefix
-                        ) + imported_count
-                        
-                        student_data['admission_no'] = generate_admission_number(
-                            prefix=prefix,
-                            next_sequence=next_sequence
-                        )
-                    
-                    if student_data.get('current_class'):
-                        class_id = student_data['current_class']
-                        class_obj = Class.objects.filter(id=class_id).first()
-                        if class_obj:
-                            student_data['current_class'] = class_obj.id
-                        else:
-                            errors.append({
-                                'row': index + 2,
-                                'error': f'Class with ID "{class_id}" not found',
-                                'data': student_data
-                            })
-                            continue
-                    
+                        next_seq = get_next_admission_sequence(Student.objects.all(), prefix=prefix) + imported_count
+                        student_data['admission_no'] = generate_admission_number(prefix=prefix, next_sequence=next_seq)
+
+                    # Validate with serializer
                     serializer = StudentCreateSerializer(data=student_data)
-                    
                     if serializer.is_valid():
                         serializer.save()
                         imported_count += 1
                     else:
+                        # Flatten serializer errors
+                        flat_errors = []
+                        for field, msgs in serializer.errors.items():
+                            flat_errors.append(f"{field}: {', '.join(msgs)}")
                         errors.append({
-                            'row': index + 2,
-                            'errors': serializer.errors,
-                            'data': student_data
+                            'row': index + 1,
+                            'error': '; '.join(flat_errors),
+                            'data': {k: v for k, v in student_data.items() if k != 'created_by'}
                         })
-                        logger.error(f"Validation error for row {index + 2}: {serializer.errors}")
-                
+
                 except Exception as e:
                     errors.append({
-                        'row': index + 2,
+                        'row': index + 1,
                         'error': str(e),
                         'data': student_data if 'student_data' in locals() else {}
                     })
-                    logger.error(f"Error importing row {index + 2}: {str(e)}")
-        
-        logger.info(f"Imported {imported_count} students by user {request.user.username}. Errors: {len(errors)}")
-        
+                    logger.error(f"Import row {index+1} error: {str(e)}")
+
+        logger.info(f"Imported {imported_count} students. Errors: {len(errors)}")
         return Response({
             'success': True,
             'importedCount': imported_count,
             'errors': errors,
-            'message': f'Successfully imported {imported_count} students. {len(errors)} errors.'
+            'message': f'Successfully imported {imported_count} students. {len(errors)} rows had errors.'
         }, status=status.HTTP_200_OK)
-    
+
     except Exception as e:
         logger.error(f"Error importing students: {str(e)}")
         return Response({
             'success': False,
             'error': f'Failed to import students: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+    
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_admission_stats(request):

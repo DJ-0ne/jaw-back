@@ -77,56 +77,97 @@ def create_audit_log(request, action, model_name, record_id, old_values=None, ne
 
 from django.db.models import Q
 
-def generate_invoice_for_student(student, academic_year, term, request=None):
-    """Generate invoice for a student based on current term fee structure"""
+def generate_invoice_for_student(student, academic_year, term, request=None, fallback_amount=None):
     try:
+        term_value = term.term
+        term_number = term_value.replace("Term ", "").strip()
+        term_padded = f"Term {term_number}"
+
+        year_code = academic_year.year_code
+        year_slash = year_code.replace("-", "/")
+        year_short = year_code.split("-")[0]
+
         existing_invoice = StudentFeeInvoice.objects.filter(
             student=student,
-            academic_year=academic_year.year_code,
-            term=term.term
+            academic_year=year_code,
+        ).filter(
+            Q(term=term_value) | Q(term=term_number)
         ).first()
-        
+
         if existing_invoice:
             return existing_invoice
 
-        # Normalize term value - handle both "Term 1" and "1" formats
-        term_value = term.term  # e.g. "Term 1"
-        term_number = term_value.replace("Term ", "").strip()  # e.g. "1"
-
         fee_structures = FeeStructure.objects.filter(
             class_id=student.current_class,
-            academic_year=academic_year.year_code,
-            is_active=True
+            is_active=True,
         ).filter(
-            Q(term=term_value) | Q(term=term_number)
+            Q(academic_year=year_code) |
+            Q(academic_year=year_slash) |
+            Q(academic_year=year_short)
+        ).filter(
+            Q(term=term_value) |
+            Q(term=term_number) |
+            Q(term=term_padded)
         ).select_related('category')
-        
+
+        logger.info(
+            f"[invoice] student={student.admission_no} "
+            f"class={student.current_class} "
+            f"year_variants=[{year_code},{year_slash},{year_short}] "
+            f"term_variants=[{term_value},{term_number}] "
+            f"fee_structures_count={fee_structures.count()}"
+        )
+        sample = FeeStructure.objects.filter(
+            class_id=student.current_class
+        ).values('academic_year', 'term', 'is_active', 'amount')[:10]
+        logger.info(f"[invoice] DB sample for class {student.current_class}: {list(sample)}")
+
         if not fee_structures.exists():
+            if fallback_amount is not None:
+                fallback_decimal = Decimal(str(fallback_amount))
+                invoice = StudentFeeInvoice.objects.create(
+                    student=student,
+                    academic_year=year_code,
+                    term=term.term,
+                    invoice_date=timezone.now().date(),
+                    due_date=timezone.now().date() + timedelta(days=30),
+                    subtotal=fallback_decimal,
+                    discount_amount=Decimal('0'),
+                    late_fee_amount=Decimal('0'),
+                    total_amount=fallback_decimal,
+                    amount_paid=Decimal('0'),
+                    balance_amount=fallback_decimal,
+                    status='Pending',
+                    payment_status='Unpaid',
+                    created_by=request.user if request else None,
+                )
+                return invoice
+
             logger.warning(
                 f"No fee structure found for class={student.current_class}, "
-                f"academic_year={academic_year.year_code}, term={term_value}"
+                f"academic_year={year_code}, term={term_value}"
             )
             return None
-        
+
         total_amount = sum(fs.amount for fs in fee_structures)
-        
+
         invoice = StudentFeeInvoice.objects.create(
             student=student,
-            academic_year=academic_year.year_code,
+            academic_year=year_code,
             term=term.term,
             invoice_date=timezone.now().date(),
             due_date=timezone.now().date() + timedelta(days=30),
             subtotal=total_amount,
-            discount_amount=0,
-            late_fee_amount=0,
+            discount_amount=Decimal('0'),
+            late_fee_amount=Decimal('0'),
             total_amount=total_amount,
-            amount_paid=0,
+            amount_paid=Decimal('0'),
             balance_amount=total_amount,
             status='Pending',
             payment_status='Unpaid',
-            created_by=request.user if request else None
+            created_by=request.user if request else None,
         )
-        
+
         for fs in fee_structures:
             InvoiceItem.objects.create(
                 invoice=invoice,
@@ -135,18 +176,108 @@ def generate_invoice_for_student(student, academic_year, term, request=None):
                 quantity=1,
                 unit_price=fs.amount,
                 amount=fs.amount,
-                discount_percentage=0,
-                discount_amount=0,
-                net_amount=fs.amount
+                discount_percentage=Decimal('0'),
+                discount_amount=Decimal('0'),
+                net_amount=fs.amount,
             )
-        
+
         return invoice
-        
+
     except Exception as e:
         logger.error(f"Error generating invoice: {str(e)}")
         return None
-    
 
+ # Add to bursar_views.py
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def recalculate_invoice(request, student_id):
+    try:
+        student = Student.objects.get(id=student_id)
+        academic_year, term = get_current_academic_year_and_term()
+
+        if not academic_year or not term:
+            return Response({'success': False, 'error': 'No active academic year or term'}, status=status.HTTP_400_BAD_REQUEST)
+
+        term_value = term.term
+        term_number = term_value.replace("Term ", "").strip()
+        year_code = academic_year.year_code
+        year_slash = year_code.replace("-", "/")
+        year_short = year_code.split("-")[0]
+
+        invoice = StudentFeeInvoice.objects.filter(
+            student=student,
+            academic_year=year_code,
+        ).filter(
+            Q(term=term_value) | Q(term=term_number)
+        ).first()
+
+        if not invoice:
+            return Response({'success': False, 'error': 'No invoice found for current term'}, status=status.HTTP_404_NOT_FOUND)
+
+        fee_structures = FeeStructure.objects.filter(
+            class_id=student.current_class,
+            is_active=True,
+        ).filter(
+            Q(academic_year=year_code) | Q(academic_year=year_slash) | Q(academic_year=year_short)
+        ).filter(
+            Q(term=term_value) | Q(term=term_number) | Q(term=f"Term {term_number}")
+        ).select_related('category')
+
+        if not fee_structures.exists():
+            return Response({'success': False, 'error': 'No fee structures found'}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_total = sum(fs.amount for fs in fee_structures)
+        old_total = invoice.total_amount
+        amount_changed = new_total != old_total
+
+        # Only write to DB if something actually changed
+        if amount_changed:
+            with transaction.atomic():
+                invoice.items.all().delete()
+                for fs in fee_structures:
+                    InvoiceItem.objects.create(
+                        invoice=invoice,
+                        fee_structure=fs,
+                        description=fs.category.category_name,
+                        quantity=1,
+                        unit_price=fs.amount,
+                        amount=fs.amount,
+                        discount_percentage=Decimal('0'),
+                        discount_amount=Decimal('0'),
+                        net_amount=fs.amount,
+                    )
+
+                invoice.subtotal = new_total
+                invoice.total_amount = new_total
+                invoice.balance_amount = new_total - invoice.amount_paid
+
+                if invoice.balance_amount <= Decimal('0'):
+                    invoice.status = 'Paid'
+                    invoice.payment_status = 'Fully Paid'
+                    invoice.balance_amount = Decimal('0')
+                elif invoice.amount_paid > Decimal('0'):
+                    invoice.status = 'Partial'
+                    invoice.payment_status = 'Partially Paid'
+                else:
+                    invoice.status = 'Pending'
+                    invoice.payment_status = 'Unpaid'
+
+                invoice.save()
+                logger.info(f"Invoice recalculated for {student.admission_no}: {old_total} -> {new_total}")
+
+        return Response({
+            'success': True,
+            'amount_changed': amount_changed,
+            'data': StudentFeeInvoiceSerializer(invoice).data,
+        }, status=status.HTTP_200_OK)
+
+    except Student.DoesNotExist:
+        return Response({'success': False, 'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.error(f"Error recalculating invoice: {str(e)}")
+        return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 def get_student_credit_balance(student):
     """Get student's credit balance from previous excess payments"""
     try:
@@ -297,63 +428,56 @@ def generate_invoice(request, student_id):
     try:
         student = Student.objects.get(id=student_id)
         academic_year, term = get_current_academic_year_and_term()
-        
+
         if not academic_year or not term:
             return Response({
                 'success': False,
                 'error': 'No active academic year or term found'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        term_value = term.term
+        term_number = term_value.replace("Term ", "").strip()
+
+        # Use the same broad filter as the helper — avoids "already exists" being missed
         existing_invoice = StudentFeeInvoice.objects.filter(
             student=student,
             academic_year=academic_year.year_code,
-            term=term.term
+        ).filter(
+            Q(term=term_value) | Q(term=term_number)
         ).first()
-        
+
         if existing_invoice:
             return Response({
                 'success': True,
                 'data': StudentFeeInvoiceSerializer(existing_invoice).data,
                 'message': 'Invoice already exists'
             }, status=status.HTTP_200_OK)
-        
+
         invoice = generate_invoice_for_student(student, academic_year, term, request)
-        
+
         if invoice:
             create_audit_log(
-                request,
-                'INVOICE_GENERATED',
-                'StudentFeeInvoice',
-                invoice.id,
-                None,
-                {'invoice_no': invoice.invoice_no, 'amount': float(invoice.total_amount)}
+                request, 'INVOICE_GENERATED', 'StudentFeeInvoice', invoice.id,
+                None, {'invoice_no': invoice.invoice_no, 'amount': float(invoice.total_amount)}
             )
-            
             return Response({
                 'success': True,
                 'data': StudentFeeInvoiceSerializer(invoice).data,
-                'message': f'Invoice generated successfully'
+                'message': 'Invoice generated successfully'
             }, status=status.HTTP_201_CREATED)
         else:
             return Response({
                 'success': False,
-                'error': f'No fee structure found for class {student.current_class.class_name}'
+                'error': f'No fee structure found for class {student.current_class.class_name}. '
+                         f'Please set up fee structures for this class first.'
             }, status=status.HTTP_400_BAD_REQUEST)
-    
+
     except Student.DoesNotExist:
-        return Response({
-            'success': False,
-            'error': 'Student not found'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
+        return Response({'success': False, 'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error(f"Error generating invoice: {str(e)}")
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+        return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_student_balance(request, student_id):
